@@ -1,6 +1,6 @@
 # agentsh + Daytona: Secure AI Agent Sandbox
 
-This project provides a Docker image that integrates [agentsh](https://github.com/erans/agentsh) with [Daytona](https://daytona.io) to create a secure sandbox environment for running AI agent code.
+This project provides a Docker image that integrates [agentsh](https://www.agentsh.org) with [Daytona](https://daytona.io) to create a secure sandbox environment for running AI agent code.
 
 ## What is agentsh?
 
@@ -357,6 +357,6 @@ MIT License - See LICENSE file for details.
 
 ## Links
 
-- [agentsh GitHub](https://github.com/erans/agentsh)
+- [agentsh](https://www.agentsh.org)
 - [Daytona Documentation](https://www.daytona.io/docs)
 - [Daytona SDK](https://pypi.org/project/daytona-sdk/)
