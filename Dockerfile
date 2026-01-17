@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ARG AGENTSH_REPO=erans/agentsh
-ARG AGENTSH_TAG=v0.7.0
+ARG AGENTSH_TAG=v0.7.2
 ARG DEB_ARCH=amd64
 
 # Install base dependencies
@@ -55,7 +55,7 @@ RUN agentsh shim install-shell \
     --i-understand-this-modifies-the-host
 
 # Configure agentsh for runtime
-ENV AGENTSH_SERVER=http://127.0.0.1:8080
+ENV AGENTSH_SERVER=http://127.0.0.1:18080
 
 USER daytona
 WORKDIR /home/daytona
