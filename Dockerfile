@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ARG AGENTSH_REPO=erans/agentsh
-ARG AGENTSH_TAG=v0.7.2
+ARG AGENTSH_TAG=v0.7.5
 ARG DEB_ARCH=amd64
 
 # Install base dependencies
