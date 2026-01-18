@@ -1,362 +1,332 @@
-# agentsh + Daytona: Secure AI Agent Sandbox
+# agentsh + Daytona: Defense-in-Depth for AI Agents
 
-This project provides a Docker image that integrates [agentsh](https://www.agentsh.org) with [Daytona](https://daytona.io) to create a secure sandbox environment for running AI agent code.
+This project combines [Daytona](https://daytona.io) sandbox infrastructure with [agentsh](https://www.agentsh.org) policy enforcement to create a comprehensive security solution for running AI coding agents.
 
-## What is agentsh?
+## Why Both?
 
-agentsh is a policy-enforced execution gateway designed to secure AI coding agents like **Claude Code**, **Codex CLI**, and other AI-powered development tools. It intercepts and controls:
+**Daytona** provides excellent container-level isolation—ephemeral sandboxes that prevent agents from affecting your host system. But containers alone can't distinguish between legitimate agent actions and malicious ones.
 
-- **Commands**: Block dangerous commands like `sudo`, `su`, `ssh`
-- **Network**: Block connections to malicious domains, require approval for unknown sites
-- **Files**: Soft-delete protection, credential access approval
-- **Environment Variables**: Protect sensitive env vars from being exposed to agents
-- **DLP (Data Loss Prevention)**: Built-in redaction and tokenization to prevent sensitive data leakage
+**agentsh** adds the application-level security layer that understands *what* agents are doing and enforces fine-grained policies on commands, network access, file operations, and sensitive data.
 
-## Features
+Together, they provide **defense-in-depth**: even if an AI agent is compromised or hallucinates dangerous commands, multiple security layers prevent harm.
 
-This integration provides:
+## Security Comparison
 
-| Security Layer | Protection |
-|---------------|------------|
-| Command blocking | `sudo`, `su`, `ssh`, `nc`, `kill`, etc. |
-| Network blocking | Malicious domains (e.g., `evil.com`) |
-| Network proxy | All HTTP/HTTPS traffic routed through agentsh |
-| Credential protection | Approval required for `.env`, `.ssh`, `.aws` access |
-| Soft-delete | File deletions are recoverable |
-| Env var protection | Sensitive environment variables hidden from agents |
-| DLP redaction | Automatic redaction of secrets, API keys, tokens |
-| DLP tokenization | Tokenize sensitive data before it reaches AI models |
+| Threat | Daytona Alone | Daytona + agentsh |
+|--------|---------------|-------------------|
+| `rm -rf /` destroys data | ✅ Contained to sandbox | ✅ **Blocked** + files recoverable via soft-delete |
+| Agent exfiltrates secrets to `evil.com` | ❌ Network allowed | ✅ **Blocked by domain policy** |
+| Agent reads `~/.aws/credentials` | ❌ File readable | ✅ **Requires approval** |
+| Agent runs `sudo` for privilege escalation | ⚠️ May work in container | ✅ **Command blocked** |
+| Agent accesses cloud metadata (SSRF) | ❌ `169.254.169.254` reachable | ✅ **Blocked by CIDR policy** |
+| `git push --force` rewrites history | ❌ Git works normally | ✅ **Blocked by git safety rules** |
+| Agent leaks API keys to LLM provider | ❌ Data sent as-is | ✅ **Redacted by DLP** |
+| Agent enumerates env vars for secrets | ❌ `env` shows all | ✅ **Iteration blocked** |
+| Prompt injection triggers reverse shell | ⚠️ `nc` may be available | ✅ **Network tools blocked** |
+
+## What agentsh Adds to Daytona
+
+### 1. Command Policy Enforcement
+
+Block dangerous commands before they execute:
+
+```yaml
+command_rules:
+  # Block privilege escalation
+  - name: block-shell-escape
+    commands: [sudo, su, chroot, nsenter, unshare]
+    decision: deny
+
+  # Block destructive operations
+  - name: block-rm-recursive
+    commands: [rm]
+    args_patterns: ["-r", "--recursive"]
+    decision: deny
+
+  # Git safety (v0.7.10)
+  - name: block-git-force-push
+    commands: [git]
+    args_patterns: ["push.*(--force|-f)"]
+    decision: deny
+```
+
+### 2. Network Domain Control
+
+Fine-grained network policies beyond IP-level firewall rules:
+
+```yaml
+network_rules:
+  # Allow package registries
+  - name: allow-npm
+    domains: ["registry.npmjs.org"]
+    decision: allow
+
+  # Allow code hosting
+  - name: allow-github
+    domains: ["github.com", "*.github.com"]
+    decision: allow
+
+  # Block cloud metadata (SSRF prevention)
+  - name: block-metadata-services
+    cidrs: ["169.254.169.254/32"]
+    decision: deny
+
+  # Block private networks (lateral movement)
+  - name: block-private-networks
+    cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    decision: deny
+
+  # Require approval for unknown destinations
+  - name: approve-unknown-https
+    ports: [443]
+    decision: approve
+```
+
+### 3. File Access Controls
+
+Protect sensitive files with approval workflows:
+
+```yaml
+file_rules:
+  # Soft-delete instead of permanent deletion
+  - name: soft-delete-workspace
+    paths: ["${PROJECT_ROOT}/**"]
+    operations: [delete]
+    decision: soft_delete
+
+  # Require approval for credential access
+  - name: approve-aws-credentials
+    paths: ["${HOME}/.aws/**"]
+    decision: approve
+    message: "Agent wants to access AWS credentials"
+```
+
+### 4. Environment Variable Protection
+
+Prevent secret discovery through env enumeration:
+
+```yaml
+env_rules:
+  # Block `env`, `printenv`, etc. from listing all vars
+  env_block_iteration: true
+
+  # Explicitly allow safe variables
+  env_allow: [PATH, HOME, USER, TERM, NODE_ENV]
+
+  # Block sensitive variables
+  env_block: [AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, OPENAI_API_KEY]
+```
+
+### 5. Data Loss Prevention (DLP)
+
+Redact secrets before they reach AI providers:
+
+```yaml
+dlp:
+  mode: redact
+  patterns:
+    api_keys: true
+    credit_card: true
+  custom_patterns:
+    - name: daytona_api_key
+      display: DAYTONA_KEY
+      regex: "dtn_[a-zA-Z0-9]{64}"
+```
+
+### 6. Comprehensive Audit Logging
+
+Every command, file access, and network request is logged:
+
+```yaml
+audit:
+  log_allowed: true
+  log_denied: true
+  include_stdout: true
+  include_stderr: true
+  retention_days: 90
+```
 
 ## Supported AI Coding Agents
-
-agentsh is designed to work with:
 
 - **Claude Code** - Anthropic's AI coding assistant
 - **Codex CLI** - OpenAI's command-line coding tool
 - **Aider** - AI pair programming in your terminal
 - **Continue** - Open-source AI code assistant
 - **Cursor** - AI-powered code editor
-- Any other AI agent that executes shell commands
+- Any agent that executes shell commands
 
-## Prerequisites
+## Quick Start
+
+### Prerequisites
 
 - Docker installed locally
 - [Daytona CLI](https://www.daytona.io/docs) installed
 - Daytona account with API key
 
-## Quick Start
-
-### 1. Clone this repository
+### 1. Clone and build
 
 ```bash
 git clone <this-repo>
 cd daytona-test
+docker build -t daytona-agentsh:v0.7.10 .
 ```
 
-### 2. Build the Docker image
-
-```bash
-docker build -t daytona-agentsh:v0.7.3 .
-```
-
-### 3. Test locally (optional)
+### 2. Test locally
 
 ```bash
 # Test that evil.com is blocked
-docker run --rm daytona-agentsh:v0.7.3 bash -c 'curl -s https://evil.com'
-# Should show: 400 Bad Request (blocked by agentsh)
+docker run --rm daytona-agentsh:v0.7.10 bash -c 'curl -s https://evil.com'
+# Output: blocked by policy (rule=block-evil-domains)
 
 # Test that sudo is blocked
-docker run --rm daytona-agentsh:v0.7.3 bash -c 'sudo whoami'
-# Should fail with permission denied
+docker run --rm daytona-agentsh:v0.7.10 bash -c 'sudo whoami'
+# Output: command blocked
 ```
 
-### 4. Login to Daytona
+### 3. Deploy to Daytona
 
-```bash
-daytona login
-```
-
-Or with API key:
 ```bash
 daytona login --api-key YOUR_API_KEY
-```
 
-### 5. Push the image to Daytona
-
-```bash
-daytona snapshot push daytona-agentsh:v0.7.3 \
+daytona snapshot push daytona-agentsh:v0.7.10 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
   --disk 10
-```
 
-### 6. Create a sandbox
-
-```bash
 daytona sandbox create \
   --snapshot "agentsh-sandbox" \
-  --name "my-secure-sandbox" \
-  --auto-stop 30
+  --name "my-secure-sandbox"
 ```
 
-## Using the Python SDK
-
-Install the Daytona SDK:
+### 4. Run the security demo
 
 ```bash
 pip install daytona-sdk
+export DAYTONA_API_KEY="your-api-key"
+python example.py
 ```
 
-### Example: Testing Security Policies
+## Architecture
 
-See `example.py` for a complete example that demonstrates:
-- Command blocking (sudo, su, ssh, nc)
-- Network blocking (evil.com)
-- Allowed operations (ls, whoami, curl to safe sites)
-
-```bash
-# Set your API key
-export DAYTONA_API_KEY="your-api-key"
-export DAYTONA_API_URL="https://app.daytona.io/api"
-
-# Run the example
-python example.py
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Daytona Infrastructure                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    Ephemeral Sandbox Container                    │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  AI Agent (Claude Code, Cursor, Aider, etc.)                │  │  │
+│  │  └──────────────────────────┬──────────────────────────────────┘  │  │
+│  │                             │                                     │  │
+│  │                             ▼                                     │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  /bin/bash → agentsh-shell-shim                             │  │  │
+│  │  │                                                             │  │  │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │  │  │
+│  │  │  │           agentsh Policy Engine                     │    │  │  │
+│  │  │  │                                                     │    │  │  │
+│  │  │  │  • Command rules (allow/deny/approve)               │    │  │  │
+│  │  │  │  • Network rules (domain/CIDR filtering)            │    │  │  │
+│  │  │  │  • File rules (soft-delete, credential protection)  │    │  │  │
+│  │  │  │  • Env rules (block iteration, hide secrets)        │    │  │  │
+│  │  │  │  • Git safety (block force push, protect main)      │    │  │  │
+│  │  │  │  • DLP (redact secrets before LLM)                  │    │  │  │
+│  │  │  │  • Audit logging (all operations)                   │    │  │  │
+│  │  │  └─────────────────────────────────────────────────────┘    │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                   │  │
+│  │  Container isolation: filesystem, network namespace, cgroups      │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  Daytona: Orchestration, snapshots, auto-stop, SDK access               │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Policy Configuration
 
-The security policy is defined in `default.yaml`. Key sections:
+### Files
 
-### Blocked Commands
+| File | Purpose |
+|------|---------|
+| `config.yaml` | agentsh server settings (logging, DLP, audit) |
+| `default.yaml` | Security policy (commands, network, files, env) |
+| `Dockerfile` | Container image with agentsh v0.7.10 |
+| `example.py` | Python SDK demo |
+
+### Key Policy Sections
+
+**Command Rules** - What programs can run and with what arguments
+**Network Rules** - Which domains/IPs are allowed, blocked, or require approval
+**File Rules** - Read/write/delete permissions, soft-delete, credential protection
+**Env Rules** - Which environment variables are visible to agents
+**Resource Limits** - Memory, CPU, process count, timeouts
+**Audit** - What to log and how long to retain
+
+### Customization Examples
+
+#### Block a specific domain
+
+```yaml
+network_rules:
+  - name: block-competitor
+    domains: ["competitor.com", "*.competitor.com"]
+    decision: deny
+```
+
+#### Require approval for database tools
 
 ```yaml
 command_rules:
-  - name: block-shell-escape
-    commands: [sudo, su, chroot, nsenter, unshare]
-    decision: deny
-
-  - name: block-network-tools
-    commands: [nc, netcat, ncat, socat, telnet, ssh, scp, rsync]
-    decision: deny
-
-  - name: block-system-commands
-    commands: [shutdown, reboot, systemctl, kill, killall, pkill]
-    decision: deny
+  - name: approve-database
+    commands: [psql, mysql, mongosh]
+    decision: approve
+    message: "Agent wants to access database"
+    timeout: 5m
 ```
 
-### Blocked Domains
+#### Protect custom credential paths
 
 ```yaml
-network_rules:
-  - name: block-evil-domains
-    domains:
-      - "evil.com"
-      - "*.evil.com"
-    decision: deny
-
-  - name: block-metadata-services
-    cidrs:
-      - "169.254.169.254/32"  # AWS metadata
-      - "100.100.100.200/32"  # Alibaba metadata
+file_rules:
+  - name: block-secrets-dir
+    paths: ["/app/secrets/**", "**/credentials/**"]
     decision: deny
 ```
-
-### Allowed Package Registries
-
-```yaml
-network_rules:
-  - name: allow-npm
-    domains: ["registry.npmjs.org"]
-    ports: [443]
-    decision: allow
-
-  - name: allow-pypi
-    domains: ["pypi.org", "files.pythonhosted.org"]
-    ports: [443]
-    decision: allow
-```
-
-## How It Works
-
-1. **Shell Shim**: `/bin/bash` is replaced with `agentsh-shell-shim`
-2. **Auto-start**: When bash runs, agentsh server starts automatically
-3. **Proxy Injection**: `HTTP_PROXY` and `HTTPS_PROXY` are set to route traffic through agentsh
-4. **Policy Enforcement**: All commands and network requests are checked against the policy
-
-```
-User Login
-    │
-    ▼
-/bin/bash (agentsh-shell-shim)
-    │
-    ▼
-agentsh server auto-starts
-    │
-    ├─► Sets HTTP_PROXY, HTTPS_PROXY
-    │
-    ▼
-Commands/Network routed through agentsh
-    │
-    ▼
-Policy rules applied (allow/deny/approve)
-```
-
-## Customizing the Policy
-
-Edit `default.yaml` to customize the security policy:
-
-### Add blocked domains
-
-```yaml
-- name: block-custom-domains
-  domains:
-    - "malware-site.com"
-    - "*.suspicious-domain.net"
-  decision: deny
-```
-
-### Add blocked commands
-
-```yaml
-- name: block-custom-commands
-  commands:
-    - dangerous-tool
-    - another-blocked-cmd
-  decision: deny
-```
-
-### Require approval for sensitive operations
-
-```yaml
-- name: approve-database-access
-  commands:
-    - psql
-    - mysql
-  decision: approve
-  message: "Agent wants to access database"
-  timeout: 5m
-```
-
-## DLP (Data Loss Prevention)
-
-agentsh includes built-in DLP capabilities to prevent sensitive data from being leaked to AI models. The DLP system intercepts LLM API requests and redacts sensitive data before it reaches the provider.
-
-**Note:** DLP is configured in `config.yaml` (server config), not in `default.yaml` (policy file).
-
-### Configuration
-
-```yaml
-dlp:
-  mode: redact  # 'redact' or 'disabled'
-
-  # Built-in pattern detection
-  patterns:
-    email: true
-    phone: true
-    credit_card: true
-    ssn: true
-    api_keys: true
-
-  # Custom patterns for organization-specific data
-  custom_patterns:
-    - name: customer_id
-      display: CUSTOMER_ID
-      regex: "CUST-[0-9]{8}"
-
-    - name: internal_token
-      display: INTERNAL_TOKEN
-      regex: "int_[a-zA-Z0-9]{32}"
-```
-
-### Built-in Patterns
-
-| Pattern | Description |
-|---------|-------------|
-| `email` | Email addresses |
-| `phone` | Phone numbers |
-| `credit_card` | Credit card numbers |
-| `ssn` | Social Security Numbers |
-| `api_keys` | Common API key formats |
-
-### Custom Patterns
-
-Add organization-specific patterns with:
-- `name`: Unique identifier for the pattern
-- `display`: Label shown in redacted output (e.g., `[REDACTED:DISPLAY]`)
-- `regex`: Regular expression to match sensitive data
-
-See `config.yaml` for examples of custom patterns for OpenAI keys, AWS credentials, GitHub tokens, and more.
 
 ## Troubleshooting
 
 ### Commands not being blocked
 
-Ensure you're running through the shell shim:
+Ensure commands run through the shell shim:
 ```bash
 # Correct - runs through agentsh
 docker run ... bash -c 'sudo whoami'
 
-# Bypasses agentsh
+# Bypasses agentsh (don't do this)
 docker run --entrypoint /bin/bash.real ... -c 'sudo whoami'
 ```
 
-### Sandbox not responding / commands hanging
+### Sandbox initialization delay
 
-The agentsh daemon takes **10-20 seconds** to fully initialize after a sandbox is created. If you're using the SDK programmatically, add a wait/retry loop:
+agentsh daemon takes 10-20 seconds to start. The `example.py` includes retry logic—see the wait loop pattern.
 
-```python
-# Wait for agentsh daemon to initialize
-import time
-import signal
-
-for i in range(10):
-    time.sleep(5)
-    try:
-        sandbox = daytona.get(sandbox.id)
-        signal.alarm(5)  # Use signal for reliable timeout
-        result = sandbox.process.exec("echo ready", timeout=5)
-        signal.alarm(0)
-        if result.exit_code == 0:
-            print(f"Sandbox ready after {(i+1)*5}s")
-            break
-    except:
-        signal.alarm(0)
-        continue
-```
-
-See `example.py` for the complete implementation.
-
-### Network blocking not working
-
-Verify the proxy is set:
-```bash
-docker run ... bash -c 'echo $HTTPS_PROXY'
-# Should show: http://127.0.0.1:<port>
-```
-
-### Viewing agentsh logs
+### Viewing logs
 
 ```bash
 docker run ... bash -c 'cat /var/log/agentsh/*.log'
 ```
 
-## Files
+## Version History
 
-| File | Description |
-|------|-------------|
-| `Dockerfile` | Docker image definition with agentsh v0.7.0 |
-| `config.yaml` | agentsh server configuration |
-| `default.yaml` | Security policy (commands, network, files, DLP) |
-| `example.py` | Python SDK example demonstrating security features |
+- **v0.7.10** - Git safety rules, regex args_patterns, env protection
+- **v0.7.9** - Initial Daytona integration
+
+## Links
+
+- [agentsh Documentation](https://www.agentsh.org)
+- [Daytona Documentation](https://www.daytona.io/docs)
+- [Daytona Python SDK](https://pypi.org/project/daytona-sdk/)
 
 ## License
 
 MIT License - See LICENSE file for details.
-
-## Links
-
-- [agentsh](https://www.agentsh.org)
-- [Daytona Documentation](https://www.daytona.io/docs)
-- [Daytona SDK](https://pypi.org/project/daytona-sdk/)

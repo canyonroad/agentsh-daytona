@@ -1,12 +1,14 @@
-# Agent Sandbox Policy for agentsh
+# Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
+# Updated for agentsh v0.7.10
 
 version: 1
 name: default
 description: |
-  High-security sandbox for AI agents running unknown code.
+  High-security sandbox for AI agents running in Daytona sandboxes.
   Default deny with explicit allowlist, approval for any credential access,
   redirect network tools to internal proxies, soft-delete for recovery.
+  Includes git safety rules and environment variable protection.
 
 # =============================================================================
 # FILE OPERATION RULES
@@ -48,6 +50,38 @@ file_rules:
     paths:
       - "${PROJECT_ROOT}"
       - "${PROJECT_ROOT}/**"
+    operations:
+      - delete
+      - rmdir
+    decision: soft_delete
+    message: "File quarantined (recoverable): {{.Path}}"
+
+  # ---------------------------------------------------------------------------
+  # Daytona-specific paths
+  # ---------------------------------------------------------------------------
+
+  - name: allow-daytona-home
+    description: Allow access to Daytona user home directory
+    paths:
+      - "/home/daytona"
+      - "/home/daytona/**"
+    operations:
+      - read
+      - write
+      - create
+      - mkdir
+      - chmod
+      - rename
+      - open
+      - stat
+      - list
+      - readlink
+    decision: allow
+
+  - name: soft-delete-daytona-home
+    description: Soft-delete files in Daytona home (recoverable)
+    paths:
+      - "/home/daytona/**"
     operations:
       - delete
       - rmdir
@@ -274,6 +308,49 @@ network_rules:
     decision: allow
 
   # ---------------------------------------------------------------------------
+  # Code hosting platforms
+  # ---------------------------------------------------------------------------
+
+  - name: allow-github
+    description: GitHub access for git operations
+    domains:
+      - "github.com"
+      - "*.github.com"
+      - "raw.githubusercontent.com"
+      - "api.github.com"
+    ports: [443, 22]
+    decision: allow
+
+  - name: allow-gitlab
+    description: GitLab access for git operations
+    domains:
+      - "gitlab.com"
+      - "*.gitlab.com"
+    ports: [443, 22]
+    decision: allow
+
+  - name: allow-bitbucket
+    description: Bitbucket access for git operations
+    domains:
+      - "bitbucket.org"
+      - "*.bitbucket.org"
+    ports: [443, 22]
+    decision: allow
+
+  # ---------------------------------------------------------------------------
+  # Daytona infrastructure
+  # ---------------------------------------------------------------------------
+
+  - name: allow-daytona-api
+    description: Daytona API and services
+    domains:
+      - "app.daytona.io"
+      - "*.daytona.io"
+      - "api.daytona.io"
+    ports: [443]
+    decision: allow
+
+  # ---------------------------------------------------------------------------
   # Embedded LLM Proxy
   # ---------------------------------------------------------------------------
 
@@ -400,6 +477,46 @@ command_rules:
     decision: allow
 
   # ---------------------------------------------------------------------------
+  # Git safety rules (v0.7.10) - prevent destructive git operations
+  # ---------------------------------------------------------------------------
+
+  - name: block-git-force-push
+    description: Block force pushing (prevents history rewriting)
+    commands:
+      - git
+    args_patterns:
+      - "push.*(--force|-f)"
+    decision: deny
+    message: "Force pushing is blocked. Use standard merge workflow instead."
+
+  - name: block-git-push-main
+    description: Block direct pushes to main/master branches
+    commands:
+      - git
+    args_patterns:
+      - "push.*(origin\\s+)?(main|master)"
+    decision: deny
+    message: "Direct push to main/master blocked. Use pull requests instead."
+
+  - name: block-git-reset-hard
+    description: Block hard resets (prevents data loss)
+    commands:
+      - git
+    args_patterns:
+      - "reset.*--hard"
+    decision: deny
+    message: "Hard reset blocked. Use 'git stash' or 'git checkout' instead."
+
+  - name: block-git-clean-force
+    description: Block forced clean (prevents untracked file deletion)
+    commands:
+      - git
+    args_patterns:
+      - "clean.*-f"
+    decision: deny
+    message: "Forced clean blocked. Review untracked files manually."
+
+  # ---------------------------------------------------------------------------
   # Approve package installation
   # ---------------------------------------------------------------------------
 
@@ -411,8 +528,8 @@ command_rules:
       - pip3
       - cargo
     args_patterns:
-      - "install*"
-      - "add*"
+      - "^install"
+      - "^add"
     decision: approve
     message: "Agent wants to install packages: {{.Args}}"
 
@@ -425,8 +542,8 @@ command_rules:
     commands:
       - rm
     args_patterns:
-      - "*-r*"
-      - "*--recursive*"
+      - "-r"
+      - "--recursive"
     decision: deny
     message: "Recursive delete blocked. Files can be removed individually."
 
@@ -508,4 +625,66 @@ audit:
   include_stderr: true
   include_file_content: false
   retention_days: 90
+
+# =============================================================================
+# ENVIRONMENT VARIABLE RULES (v0.7.10)
+# =============================================================================
+
+env_rules:
+  # Block environment variable enumeration to prevent secret discovery
+  env_block_iteration: true
+
+  # Maximum environment size limits
+  env_max_keys: 100
+  env_max_bytes: 65536
+
+  # Allowed environment variables (minimal set for development)
+  env_allow:
+    - PATH
+    - HOME
+    - USER
+    - SHELL
+    - TERM
+    - LANG
+    - LC_ALL
+    - TZ
+    - PWD
+    - OLDPWD
+    - HOSTNAME
+    - HTTPS_PROXY
+    - HTTP_PROXY
+    - NO_PROXY
+    - AGENTSH_SERVER
+    # Development tools
+    - NODE_ENV
+    - PYTHONPATH
+    - GOPATH
+    - CARGO_HOME
+    - RUSTUP_HOME
+    # Daytona-specific
+    - DAYTONA_WS_ID
+    - DAYTONA_WS_DIR
+
+  # Block these sensitive environment variables from being exposed
+  env_block:
+    - DAYTONA_API_KEY
+    - DAYTONA_API_URL
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_SESSION_TOKEN
+    - AZURE_CLIENT_ID
+    - AZURE_CLIENT_SECRET
+    - AZURE_TENANT_ID
+    - GCP_SERVICE_ACCOUNT
+    - GOOGLE_APPLICATION_CREDENTIALS
+    - GITHUB_TOKEN
+    - GITLAB_TOKEN
+    - OPENAI_API_KEY
+    - ANTHROPIC_API_KEY
+    - DATABASE_URL
+    - DB_PASSWORD
+    - SECRET_KEY
+    - PRIVATE_KEY
+    - API_KEY
+    - API_SECRET
 
