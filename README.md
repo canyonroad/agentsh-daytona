@@ -21,7 +21,6 @@ Together, they provide **defense-in-depth**: even if an AI agent is compromised 
 | Agent accesses cloud metadata (SSRF) | ❌ `169.254.169.254` reachable | ✅ **Blocked by CIDR policy** |
 | `git push --force` rewrites history | ❌ Git works normally | ✅ **Blocked by git safety rules** |
 | Agent leaks API keys to LLM provider | ❌ Data sent as-is | ✅ **Redacted by DLP** |
-| Agent enumerates env vars for secrets | ❌ `env` shows all | ✅ **Iteration blocked** |
 | Prompt injection triggers reverse shell | ⚠️ `nc` may be available | ✅ **Network tools blocked** |
 
 ## What agentsh Adds to Daytona
@@ -101,23 +100,7 @@ file_rules:
     message: "Agent wants to access AWS credentials"
 ```
 
-### 4. Environment Variable Protection
-
-Prevent secret discovery through env enumeration:
-
-```yaml
-env_rules:
-  # Block `env`, `printenv`, etc. from listing all vars
-  env_block_iteration: true
-
-  # Explicitly allow safe variables
-  env_allow: [PATH, HOME, USER, TERM, NODE_ENV]
-
-  # Block sensitive variables
-  env_block: [AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, OPENAI_API_KEY]
-```
-
-### 5. Data Loss Prevention (DLP)
+### 4. Data Loss Prevention (DLP)
 
 Redact secrets before they reach AI providers:
 
@@ -133,7 +116,7 @@ dlp:
       regex: "dtn_[a-zA-Z0-9]{64}"
 ```
 
-### 6. Comprehensive Audit Logging
+### 5. Comprehensive Audit Logging
 
 Every command, file access, and network request is logged:
 
@@ -228,7 +211,6 @@ python example.py
 │  │  │  │  • Command rules (allow/deny/approve)               │    │  │  │
 │  │  │  │  • Network rules (domain/CIDR filtering)            │    │  │  │
 │  │  │  │  • File rules (soft-delete, credential protection)  │    │  │  │
-│  │  │  │  • Env rules (block iteration, hide secrets)        │    │  │  │
 │  │  │  │  • Git safety (block force push, protect main)      │    │  │  │
 │  │  │  │  • DLP (redact secrets before LLM)                  │    │  │  │
 │  │  │  │  • Audit logging (all operations)                   │    │  │  │
@@ -249,7 +231,7 @@ python example.py
 | File | Purpose |
 |------|---------|
 | `config.yaml` | agentsh server settings (logging, DLP, audit) |
-| `default.yaml` | Security policy (commands, network, files, env) |
+| `default.yaml` | Security policy (commands, network, files) |
 | `Dockerfile` | Container image with agentsh v0.7.10 |
 | `example.py` | Python SDK demo |
 
@@ -258,7 +240,6 @@ python example.py
 **Command Rules** - What programs can run and with what arguments
 **Network Rules** - Which domains/IPs are allowed, blocked, or require approval
 **File Rules** - Read/write/delete permissions, soft-delete, credential protection
-**Env Rules** - Which environment variables are visible to agents
 **Resource Limits** - Memory, CPU, process count, timeouts
 **Audit** - What to log and how long to retain
 
