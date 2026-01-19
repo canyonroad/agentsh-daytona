@@ -625,3 +625,51 @@ audit:
   include_stderr: true
   include_file_content: false
   retention_days: 90
+
+# =============================================================================
+# ENVIRONMENT VARIABLE POLICY
+# =============================================================================
+
+env_policy:
+  # Allowlist - only these vars pass through (glob patterns supported)
+  allow:
+    - "HOME"
+    - "PATH"
+    - "USER"
+    - "SHELL"
+    - "TERM"
+    - "LANG"
+    - "LC_*"
+    - "TZ"
+    - "PWD"
+    - "OLDPWD"
+    - "HOSTNAME"
+    - "HTTPS_PROXY"
+    - "HTTP_PROXY"
+    - "NO_PROXY"
+    - "AGENTSH_*"
+    # Development tools
+    - "NODE_ENV"
+    - "GOPATH"
+    - "CARGO_HOME"
+    - "RUSTUP_HOME"
+    # Daytona workspace
+    - "DAYTONA_WS_ID"
+    - "DAYTONA_WS_DIR"
+
+  # Denylist - always blocked (in addition to default secrets)
+  deny:
+    - "DAYTONA_API_KEY"
+    - "DAYTONA_API_URL"
+    - "*_SECRET*"
+    - "*_TOKEN"
+    - "*_KEY"
+    - "*_PASSWORD"
+    - "DATABASE_URL"
+
+  # Limits
+  max_bytes: 65536
+  max_keys: 100
+
+  # Block env/printenv enumeration commands
+  block_iteration: true
