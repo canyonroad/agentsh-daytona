@@ -182,18 +182,18 @@ audit:
 ```bash
 git clone <this-repo>
 cd daytona-test
-docker build -t daytona-agentsh:v0.7.10 .
+docker build -t daytona-agentsh:v0.8.0 .
 ```
 
 ### 2. Test locally
 
 ```bash
 # Test that evil.com is blocked
-docker run --rm daytona-agentsh:v0.7.10 bash -c 'curl -s https://evil.com'
+docker run --rm daytona-agentsh:v0.8.0 bash -c 'curl -s https://evil.com'
 # Output: blocked by policy (rule=block-evil-domains)
 
 # Test that sudo is blocked
-docker run --rm daytona-agentsh:v0.7.10 bash -c 'sudo whoami'
+docker run --rm daytona-agentsh:v0.8.0 bash -c 'sudo whoami'
 # Output: command blocked
 ```
 
@@ -202,7 +202,7 @@ docker run --rm daytona-agentsh:v0.7.10 bash -c 'sudo whoami'
 ```bash
 daytona login --api-key YOUR_API_KEY
 
-daytona snapshot push daytona-agentsh:v0.7.10 \
+daytona snapshot push daytona-agentsh:v0.8.0 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
@@ -264,7 +264,7 @@ python example.py
 |------|---------|
 | `config.yaml` | agentsh server settings (logging, DLP, audit) |
 | `default.yaml` | Security policy (commands, network, files, env) |
-| `Dockerfile` | Container image with agentsh v0.7.10 |
+| `Dockerfile` | Container image with agentsh v0.8.0 |
 | `example.py` | Python SDK demo |
 
 ### Key Policy Sections
@@ -332,6 +332,7 @@ docker run ... bash -c 'cat /var/log/agentsh/*.log'
 
 ## Version History
 
+- **v0.8.0** - Updated to agentsh 0.8.0, simplified security config for containers
 - **v0.7.10** - Git safety rules, regex args_patterns, env protection
 - **v0.7.9** - Initial Daytona integration
 
