@@ -22,6 +22,7 @@ Together, they provide **defense-in-depth**: even if an AI agent is compromised 
 | `git push --force` rewrites history | ❌ Git works normally | ✅ **Blocked by git safety rules** |
 | Agent leaks API keys to LLM provider | ❌ Data sent as-is | ✅ **Redacted by DLP** |
 | Agent enumerates env vars for secrets | ❌ `env` shows all | ✅ **Iteration blocked** |
+| Nested script makes unauthorized request | ❌ No visibility | ✅ **Depth-aware approval** |
 | Prompt injection triggers reverse shell | ⚠️ `nc` may be available | ✅ **Network tools blocked** |
 
 ## What agentsh Adds to Daytona
@@ -48,7 +49,34 @@ command_rules:
     commands: [git]
     args_patterns: ["push.*(--force|-f)"]
     decision: deny
+
+  # v0.8.9: Block bash builtins that bypass seccomp
+  - name: block-bash-builtins
+    commands: [kill, enable, ulimit, umask, builtin, command]
+    decision: deny
 ```
+
+### 1b. Depth-Aware Command Policies (v0.8.1)
+
+Distinguish between direct user commands and nested script execution:
+
+```yaml
+command_rules:
+  # Allow curl when invoked directly by the agent
+  - name: allow-curl-direct
+    commands: [curl, wget]
+    context: [direct]
+    decision: allow
+
+  # Require approval when curl is invoked from nested scripts
+  - name: approve-curl-nested
+    commands: [curl, wget]
+    context: [nested]
+    decision: approve
+    message: "Nested script wants to fetch: {{.Args}}"
+```
+
+This prevents supply-chain attacks where malicious dependencies invoke network tools.
 
 ### 2. Network Domain Control
 
@@ -131,6 +159,19 @@ env_policy:
 
 **Default blocked secrets** (automatic): AWS credentials, KUBECONFIG, GITHUB_TOKEN, LD_PRELOAD, PYTHONPATH, BASH_ENV, and more.
 
+### 4b. Environment Variable Injection (v0.8.9)
+
+Operators can inject trusted variables that bypass policy filtering:
+
+```yaml
+# In config.yaml
+env_inject:
+  AGENTSH_SERVER: "http://127.0.0.1:18080"
+  CUSTOM_VAR: "operator-controlled-value"
+```
+
+This ensures critical configuration reaches all processes regardless of `env_policy` restrictions.
+
 ### 5. Data Loss Prevention (DLP)
 
 Redact secrets before they reach AI providers:
@@ -182,18 +223,18 @@ audit:
 ```bash
 git clone <this-repo>
 cd daytona-test
-docker build -t daytona-agentsh:v0.8.0 .
+docker build -t daytona-agentsh:v0.8.10 .
 ```
 
 ### 2. Test locally
 
 ```bash
 # Test that evil.com is blocked
-docker run --rm daytona-agentsh:v0.8.0 bash -c 'curl -s https://evil.com'
+docker run --rm daytona-agentsh:v0.8.10 bash -c 'curl -s https://evil.com'
 # Output: blocked by policy (rule=block-evil-domains)
 
 # Test that sudo is blocked
-docker run --rm daytona-agentsh:v0.8.0 bash -c 'sudo whoami'
+docker run --rm daytona-agentsh:v0.8.10 bash -c 'sudo whoami'
 # Output: command blocked
 ```
 
@@ -246,6 +287,7 @@ python example.py
 │  │  │  │  • Git safety (block force push, protect main)      │    │  │  │
 │  │  │  │  • DLP (redact secrets before LLM)                  │    │  │  │
 │  │  │  │  • Audit logging (all operations)                   │    │  │  │
+│  │  │  │  • Depth-aware policies (v0.8.1)                    │    │  │  │
 │  │  │  └─────────────────────────────────────────────────────┘    │  │  │
 │  │  └─────────────────────────────────────────────────────────────┘  │  │
 │  │                                                                   │  │
@@ -256,6 +298,32 @@ python example.py
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Security Capabilities (agentsh detect)
+
+Running `agentsh detect` inside a Daytona sandbox shows full security features are available:
+
+```
+Platform: linux
+Security Mode: full
+Protection Score: 100%
+
+CAPABILITIES
+----------------------------------------
+  capabilities_drop        ✓
+  cgroups_v2               ✓
+  ebpf                     ✓
+  fuse                     ✓
+  landlock                 ✓
+  landlock_abi             ✓ (v5)
+  landlock_network         ✓
+  pid_namespace            -
+  seccomp                  ✓
+  seccomp_basic            ✓
+  seccomp_user_notify      ✓
+```
+
+Daytona provides **100% protection score** with full security mode, including all kernel-level protections.
+
 ## Policy Configuration
 
 ### Files
@@ -264,7 +332,7 @@ python example.py
 |------|---------|
 | `config.yaml` | agentsh server settings (logging, DLP, audit) |
 | `default.yaml` | Security policy (commands, network, files, env) |
-| `Dockerfile` | Container image with agentsh v0.8.0 |
+| `Dockerfile` | Container image with agentsh v0.8.10 |
 | `example.py` | Python SDK demo |
 
 ### Key Policy Sections
@@ -332,6 +400,7 @@ docker run ... bash -c 'cat /var/log/agentsh/*.log'
 
 ## Version History
 
+- **v0.8.10** - Updated to agentsh 0.8.10, added depth-aware command policies, env_inject support, bash builtin blocking
 - **v0.8.0** - Updated to agentsh 0.8.0, simplified security config for containers
 - **v0.7.10** - Git safety rules, regex args_patterns, env protection
 - **v0.7.9** - Initial Daytona integration

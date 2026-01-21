@@ -1,5 +1,5 @@
 # agentsh server configuration for Daytona sandbox
-# Updated for agentsh v0.8.0
+# Updated for agentsh v0.8.10
 # Policy-based security mode (relies on default.yaml for enforcement)
 
 server:
@@ -40,11 +40,13 @@ audit:
     max_age_days: 90
 
 # =============================================================================
-# SECURITY CONFIGURATION (v0.8.0)
+# SECURITY CONFIGURATION (v0.8.10)
 # =============================================================================
 
 # Simplified security - rely on policy rules in default.yaml
 # Low-level features (landlock, seccomp) disabled in container environment
+# v0.8.1: Added execve interception with depth-aware policies
+# v0.8.9: Added env_inject for operator-controlled variable injection
 
 sandbox:
   enabled: true
@@ -59,6 +61,20 @@ sandbox:
     enabled: true
     intercept_mode: "all"
     proxy_listen_addr: "127.0.0.1:0"
+
+  # v0.8.1: Execve interception - disabled for container environments
+  # Enable this on hosts with full kernel support for syscall interception
+  # seccomp:
+  #   execve:
+  #     enabled: true
+
+# v0.8.9: Operator-controlled environment variable injection
+# These bypass env_policy filtering since they're operator-controlled
+env_inject:
+  # Ensure agentsh server is always reachable
+  AGENTSH_SERVER: "http://127.0.0.1:18080"
+  # Daytona workspace variables (operator-controlled)
+  # DAYTONA_WS_DIR: "/home/daytona/workspace"
 
 proxy:
   mode: "embedded"

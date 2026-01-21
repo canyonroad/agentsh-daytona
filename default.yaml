@@ -1,6 +1,9 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.8.0
+# Updated for agentsh v0.8.10
+#
+# New in v0.8.1: Depth-aware command policies (context: [direct, nested])
+# New in v0.8.9: env_inject support, bash builtin blocking
 
 version: 1
 name: default
@@ -423,14 +426,26 @@ network_rules:
 command_rules:
   # ---------------------------------------------------------------------------
   # Allow curl/wget - network rules will block malicious domains
+  # v0.8.1: context field enables depth-aware policy enforcement
   # ---------------------------------------------------------------------------
 
-  - name: allow-network-tools
-    description: Allow curl/wget (network rules enforce domain policy)
+  - name: allow-network-tools-direct
+    description: Allow curl/wget when invoked directly (not nested in scripts)
     commands:
       - curl
       - wget
+    context: [direct]
     decision: allow
+
+  - name: approve-network-tools-nested
+    description: Require approval for curl/wget invoked from nested scripts
+    commands:
+      - curl
+      - wget
+    context: [nested]
+    decision: approve
+    message: "Nested script wants to fetch: {{.Args}}"
+    timeout: 2m
 
   # ---------------------------------------------------------------------------
   # Allow safe commands
@@ -586,6 +601,22 @@ command_rules:
       - nsenter
       - unshare
     decision: deny
+
+  # ---------------------------------------------------------------------------
+  # v0.8.9: Block bash builtins that can bypass seccomp protections
+  # ---------------------------------------------------------------------------
+
+  - name: block-bash-builtins
+    description: Block bash builtins that bypass seccomp (v0.8.9)
+    commands:
+      - kill
+      - enable
+      - ulimit
+      - umask
+      - builtin
+      - command
+    decision: deny
+    message: "Bash builtin '{{.Command}}' blocked (bypasses seccomp protections)"
 
   # ---------------------------------------------------------------------------
   # Allow all other commands (Daytona needs general shell access)
