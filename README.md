@@ -14,7 +14,7 @@ Together, they provide **defense-in-depth**: even if an AI agent is compromised 
 
 | Threat | Daytona Alone | Daytona + agentsh |
 |--------|---------------|-------------------|
-| `rm -rf /` destroys data | ✅ Contained to sandbox | ✅ **Blocked** + files recoverable via soft-delete |
+| `rm -rf /` destroys data | ✅ Contained to sandbox | ✅ **Blocked** by command policy |
 | Agent exfiltrates secrets to `evil.com` | ❌ Network allowed | ✅ **Blocked by domain policy** |
 | Agent reads `~/.aws/credentials` | ❌ File readable | ✅ **Requires approval** |
 | Agent runs `sudo` for privilege escalation | ⚠️ May work in container | ✅ **Command blocked** |
@@ -116,11 +116,11 @@ Protect sensitive files with approval workflows:
 
 ```yaml
 file_rules:
-  # Soft-delete instead of permanent deletion
-  - name: soft-delete-workspace
+  # Deny file deletion in workspace
+  - name: deny-delete-workspace
     paths: ["${PROJECT_ROOT}/**"]
     operations: [delete]
-    decision: soft_delete
+    decision: deny
 
   # Require approval for credential access
   - name: approve-aws-credentials
@@ -282,7 +282,7 @@ python example.py
 │  │  │  │                                                     │    │  │  │
 │  │  │  │  • Command rules (allow/deny/approve)               │    │  │  │
 │  │  │  │  • Network rules (domain/CIDR filtering)            │    │  │  │
-│  │  │  │  • File rules (soft-delete, credential protection)  │    │  │  │
+│  │  │  │  • File rules (access control, credential protection)  │    │  │  │
 │  │  │  │  • Env policy (allowlist, block iteration)          │    │  │  │
 │  │  │  │  • Git safety (block force push, protect main)      │    │  │  │
 │  │  │  │  • DLP (redact secrets before LLM)                  │    │  │  │
@@ -332,7 +332,7 @@ Daytona provides **100% protection score** with full security mode, including al
 |------|---------|
 | `config.yaml` | agentsh server settings (logging, DLP, audit) |
 | `default.yaml` | Security policy (commands, network, files, env) |
-| `Dockerfile` | Container image with agentsh v0.8.10 |
+| `Dockerfile` | Container image with agentsh v0.9.8 |
 | `example.py` | Python SDK demo |
 
 ### Key Policy Sections
@@ -375,6 +375,22 @@ file_rules:
     decision: deny
 ```
 
+## Known Limitations
+
+### `/proc` filesystem access in containers
+
+agentsh's file policy rules define `deny` for `/proc/**`, but this is **not enforced in Daytona containers**. The `/proc` virtual filesystem is mounted by the kernel and is not interceptable by FUSE or (currently) by Landlock.
+
+**Impact:** An agent can read `/proc/1/environ` and potentially discover environment variables that `env_policy` blocks from shell access. This is a gap between the command-level `env_policy` protection (which blocks `env`/`printenv` enumeration) and the filesystem-level access to the same data via `/proc`.
+
+**Mitigation options** (in order of practicality):
+1. **Container runtime**: Use `--security-opt proc=masked` or Docker's `MaskedPaths` to hide sensitive `/proc` entries (e.g., `/proc/*/environ`, `/proc/kcore`)
+2. **Mount option**: Mount procfs with `hidepid=2` to restrict visibility to own processes
+3. **seccomp user-notify**: agentsh could intercept `openat` syscalls and deny `/proc` paths, but this adds a context switch to every file open (high performance cost)
+4. **Landlock**: Future kernel versions may improve Landlock's coverage of pseudo-filesystems
+
+**Current status:** Daytona's container isolation prevents cross-container `/proc` access, but within the sandbox, agents can read their own process's `/proc` entries. The `env_policy.deny` list and `env_policy.block_iteration` still protect against command-level enumeration — `/proc` access is a secondary channel.
+
 ## Troubleshooting
 
 ### Commands not being blocked
@@ -400,10 +416,9 @@ docker run ... bash -c 'cat /var/log/agentsh/*.log'
 
 ## Version History
 
+- **v0.9.8** - Updated to agentsh 0.9.8, Landlock filesystem enforcement, file access blocking tests, removed soft_delete (use deny), documented /proc limitation
+- **v0.9.2** - Updated to agentsh 0.9.2, dns_redirect and connect_redirect support
 - **v0.8.10** - Updated to agentsh 0.8.10, added depth-aware command policies, env_inject support, bash builtin blocking
-- **v0.8.0** - Updated to agentsh 0.8.0, simplified security config for containers
-- **v0.7.10** - Git safety rules, regex args_patterns, env protection
-- **v0.7.9** - Initial Daytona integration
 
 ## Links
 

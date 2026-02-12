@@ -1,10 +1,12 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.9.2
+# Updated for agentsh v0.9.8
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking
 # New in v0.9.0: dns_redirect and connect_redirect support
+# New in v0.9.3: agent wrap, cross-platform exec interception
+# New in v0.9.5: Landlock filesystem enforcement (kernel 5.13+)
 
 version: 1
 name: default
@@ -49,16 +51,16 @@ file_rules:
       - rename
     decision: allow
 
-  - name: soft-delete-workspace
-    description: Soft-delete files in workspace (recoverable)
+  - name: deny-delete-workspace
+    description: Deny deleting files in workspace (use rm individually)
     paths:
       - "${PROJECT_ROOT}"
       - "${PROJECT_ROOT}/**"
     operations:
       - delete
       - rmdir
-    decision: soft_delete
-    message: "File quarantined (recoverable): {{.Path}}"
+    decision: deny
+    message: "File deletion denied in workspace: {{.Path}}"
 
   # ---------------------------------------------------------------------------
   # Daytona-specific paths
@@ -82,15 +84,15 @@ file_rules:
       - readlink
     decision: allow
 
-  - name: soft-delete-daytona-home
-    description: Soft-delete files in Daytona home (recoverable)
+  - name: deny-delete-daytona-home
+    description: Deny deleting files in Daytona home
     paths:
       - "/home/daytona/**"
     operations:
       - delete
       - rmdir
-    decision: soft_delete
-    message: "File quarantined (recoverable): {{.Path}}"
+    decision: deny
+    message: "File deletion denied: {{.Path}}"
 
   # ---------------------------------------------------------------------------
   # Temp directories - sandboxed

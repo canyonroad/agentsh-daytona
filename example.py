@@ -42,9 +42,9 @@ def main():
     daytona = Daytona()
 
     # Create sandbox
-    print("[2] Creating sandbox from agentsh-sandbox-v15 snapshot...")
+    print("[2] Creating sandbox from agentsh-sandbox-v16 snapshot...")
     params = CreateSandboxFromSnapshotParams(
-        snapshot="agentsh-sandbox-v15",
+        snapshot="agentsh-sandbox-v16",
         auto_stop_interval=30
     )
     sandbox = daytona.create(params=params, timeout=120)
@@ -131,6 +131,45 @@ def main():
         test("su root - SHOULD BE BLOCKED", "su root -c whoami 2>&1")
         test("kill -9 1 - SHOULD BE BLOCKED", "kill -9 1 2>&1")
 
+        # ==================== FILE ACCESS BLOCKING ====================
+        print("\n" + "=" * 60)
+        print("  FILE ACCESS BLOCKING")
+        print("=" * 60)
+
+        # Allowed: write to workspace
+        test("Write to workspace - SHOULD BE ALLOWED",
+             "echo 'hello' > /home/daytona/test_write.txt && cat /home/daytona/test_write.txt")
+
+        # Allowed: read from workspace
+        test("Read from workspace - SHOULD BE ALLOWED",
+             "cat /home/daytona/test_write.txt")
+
+        # Blocked: write to /etc
+        test("Write to /etc/test - SHOULD BE BLOCKED",
+             "echo 'hack' > /etc/test_file 2>&1")
+
+        # Blocked: read /proc/1/environ
+        # Note: /proc is a virtual kernel filesystem - blocking depends on
+        # kernel-level enforcement (Landlock) or container isolation
+        test("Read /proc/1/environ - may leak env vars in containers",
+             "cat /proc/1/environ 2>&1 | tr '\\0' '\\n' | head -3")
+
+        # Blocked: write to system bin directory
+        test("Write to /usr/bin - SHOULD BE BLOCKED",
+             "echo 'x' > /usr/bin/evil 2>&1")
+
+        # Blocked: create file outside allowed paths
+        test("Write to /var/evil - SHOULD BE BLOCKED",
+             "echo 'x' > /var/evil 2>&1")
+
+        # Allowed: read system binaries (read-only access)
+        test("Read /usr/bin/ls (stat) - SHOULD BE ALLOWED",
+             "ls -la /usr/bin/ls 2>&1")
+
+        # Allowed: write to /tmp
+        test("Write to /tmp - SHOULD BE ALLOWED",
+             "echo 'temp' > /tmp/test_file.txt && cat /tmp/test_file.txt")
+
         # ==================== NETWORK BLOCKING ====================
         print("\n" + "=" * 60)
         print("  NETWORK BLOCKING")
@@ -153,6 +192,12 @@ def main():
       - sudo, su      -> Privilege escalation blocked
       - kill          -> System commands blocked
 
+    FILE ACCESS BLOCKING:
+      - /etc, /usr/bin, /var  -> Write denied (Landlock + OS permissions)
+      - /proc/1/environ      -> Virtual FS (requires kernel enforcement)
+      - /home/daytona        -> Read/write allowed (workspace)
+      - /tmp                 -> Read/write allowed (temp)
+
     BLOCKED NETWORK:
       - evil.com      -> Returns 400 Bad Request from agentsh proxy
 
@@ -161,6 +206,7 @@ def main():
       2. HTTPS_PROXY set to agentsh proxy
       3. All traffic routed through agentsh
       4. Policy rules (default.yaml) enforce allow/deny
+      5. Landlock (v0.9.5+) adds kernel-level filesystem enforcement
 """)
 
     finally:
