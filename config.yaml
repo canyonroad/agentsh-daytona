@@ -1,5 +1,5 @@
 # agentsh server configuration for Daytona sandbox
-# Updated for agentsh v0.9.8
+# Updated for agentsh v0.10.0
 # Policy-based security mode (relies on default.yaml for enforcement)
 
 server:
@@ -40,7 +40,7 @@ audit:
     max_age_days: 90
 
 # =============================================================================
-# SECURITY CONFIGURATION (v0.9.8)
+# SECURITY CONFIGURATION (v0.10.0)
 # =============================================================================
 
 # Simplified security - rely on policy rules in default.yaml
@@ -49,6 +49,8 @@ audit:
 # v0.9.0: Added dns_redirect and connect_redirect capabilities
 # v0.9.3: Agent wrap, cross-platform exec interception
 # v0.9.5: Landlock filesystem enforcement (kernel 5.13+)
+# v0.9.9: FUSE filesystem interception with deferred mounting
+# v0.10.0: BASH_ENV injection for builtin disabling, Landlock execution paths
 
 sandbox:
   enabled: true
@@ -65,18 +67,48 @@ sandbox:
     proxy_listen_addr: "127.0.0.1:0"
 
   # v0.8.1: Execve interception - disabled for container environments
+  # Daytona's container seccomp profile prevents installing custom seccomp filters
   # Enable this on hosts with full kernel support for syscall interception
+  # Note: Bash builtins (kill, enable, etc.) are handled by BASH_ENV instead
   # seccomp:
   #   execve:
   #     enabled: true
 
-# v0.8.9: Operator-controlled environment variable injection
-# These bypass env_policy filtering since they're operator-controlled
-env_inject:
-  # Ensure agentsh server is always reachable
-  AGENTSH_SERVER: "http://127.0.0.1:18080"
-  # Daytona workspace variables (operator-controlled)
-  # DAYTONA_WS_DIR: "/home/daytona/workspace"
+  # v0.9.9: FUSE filesystem interception with deferred mounting for containers
+  # Use /dev/fuse as marker (daytona user is in fuse group, no sudo needed)
+  fuse:
+    enabled: true
+    deferred: true
+    deferred_marker_file: "/dev/fuse"
+    audit:
+      enabled: true
+      mode: "soft_delete"
+      trash_path: "/home/daytona/.agentsh_trash"
+
+  # v0.9.5: Landlock filesystem enforcement - restrict binary execution paths
+  landlock:
+    enabled: true
+    allow_execute:
+      - /usr/bin
+      - /bin
+      - /usr/local/bin
+      - /usr/sbin
+      - /sbin
+      - /usr/lib
+      - /lib
+    network:
+      allow_connect_tcp: true
+      allow_bind_tcp: true
+
+  # v0.8.9: Operator-controlled environment variable injection
+  # These bypass env_policy filtering since they're operator-controlled
+  env_inject:
+    # Ensure agentsh server is always reachable
+    AGENTSH_SERVER: "http://127.0.0.1:18080"
+    # Activate bash_startup.sh to disable dangerous builtins (kill, enable, ulimit, etc.)
+    BASH_ENV: "/usr/lib/agentsh/bash_startup.sh"
+    # Daytona workspace variables (operator-controlled)
+    # DAYTONA_WS_DIR: "/home/daytona/workspace"
 
 proxy:
   mode: "embedded"

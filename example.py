@@ -42,9 +42,9 @@ def main():
     daytona = Daytona()
 
     # Create sandbox
-    print("[2] Creating sandbox from agentsh-sandbox-v16 snapshot...")
+    print("[2] Creating sandbox from agentsh-sandbox-v19 snapshot...")
     params = CreateSandboxFromSnapshotParams(
-        snapshot="agentsh-sandbox-v16",
+        snapshot="agentsh-sandbox-v19",
         auto_stop_interval=30
     )
     sandbox = daytona.create(params=params, timeout=120)
@@ -122,6 +122,23 @@ def main():
         test("agentsh version", "/usr/bin/agentsh --version")
         test("HTTPS_PROXY is set", "echo $HTTPS_PROXY")
 
+        # ==================== DIAGNOSTICS ====================
+        print("\n" + "=" * 60)
+        print("  DIAGNOSTICS (verify security subsystems are active)")
+        print("=" * 60)
+
+        test("FUSE mounted - agentsh filesystem interception active",
+             "mount | grep agentsh || echo 'FUSE NOT MOUNTED'")
+
+        test("BASH_ENV active - builtin disabling enabled",
+             "echo $BASH_ENV")
+
+        test("kill builtin disabled - should not be a shell builtin",
+             "type kill 2>&1")
+
+        test("agentsh security mode",
+             "/usr/bin/agentsh detect 2>&1 | head -10")
+
         # ==================== BLOCKED COMMANDS ====================
         print("\n" + "=" * 60)
         print("  BLOCKED COMMANDS")
@@ -181,6 +198,126 @@ def main():
         test("curl evil.com HTTP status",
              "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 https://evil.com 2>&1")
 
+        # ==================== MULTI-CONTEXT COMMAND BLOCKING ====================
+        print("\n" + "=" * 60)
+        print("  MULTI-CONTEXT COMMAND BLOCKING")
+        print("=" * 60)
+
+        # Blocked commands are enforced from ANY execution context, not just shell
+        # Shell shim + container no-new-privileges ensure protection across contexts
+
+        test("env runs sudo - SHOULD BE BLOCKED",
+             "env sudo whoami 2>&1")
+
+        test("xargs spawns sudo - SHOULD BE BLOCKED",
+             "echo whoami | xargs sudo 2>&1")
+
+        test("find -exec runs sudo - SHOULD BE BLOCKED",
+             "find /tmp -maxdepth 0 -exec sudo whoami \\; 2>&1")
+
+        # Nested script running blocked command - depth-aware detection
+        test("Nested script runs sudo - SHOULD BE BLOCKED",
+             "echo '#!/bin/sh\nsudo whoami' > /tmp/escalate.sh && chmod +x /tmp/escalate.sh && /tmp/escalate.sh 2>&1")
+
+        # Direct binary execution of blocked command
+        test("Direct /usr/bin/sudo - SHOULD BE BLOCKED",
+             "/usr/bin/sudo whoami 2>&1")
+
+        # Python subprocess spawning blocked commands - execve intercepted
+        test("Python subprocess sudo - SHOULD BE BLOCKED",
+             'python3 -c "import subprocess; r=subprocess.run([\'sudo\',\'whoami\'], capture_output=True, text=True); print(r.stdout or r.stderr)" 2>&1')
+
+        test("Python os.system kill - SHOULD BE BLOCKED",
+             'python3 -c "import os; os.system(\'kill -9 1\')" 2>&1')
+
+        # Allowed: env and Python running safe commands
+        test("env runs whoami - SHOULD BE ALLOWED",
+             "env whoami 2>&1")
+
+        test("Python subprocess ls - SHOULD BE ALLOWED",
+             'python3 -c "import subprocess; r=subprocess.run([\'ls\',\'/home/daytona\'], capture_output=True, text=True); print(r.stdout[:80])" 2>&1')
+
+        # ==================== FUSE PROTECTION ====================
+        print("\n" + "=" * 60)
+        print("  FUSE PROTECTION (VFS-level file interception)")
+        print("=" * 60)
+
+        # FUSE intercepts file I/O at the kernel VFS level, enforcing policy
+        # even when tools bypass shell redirects (cp, dd, tee, touch, mkdir)
+
+        test("cp to /etc - SHOULD BE BLOCKED",
+             "cp /etc/hosts /etc/hosts_copy 2>&1")
+
+        test("touch /etc/newfile - SHOULD BE BLOCKED",
+             "touch /etc/newfile 2>&1")
+
+        test("dd write to /etc - SHOULD BE BLOCKED",
+             "dd if=/dev/zero of=/etc/dd_test bs=1 count=1 2>&1")
+
+        test("tee write to /usr/bin - SHOULD BE BLOCKED",
+             "echo x | tee /usr/bin/evil 2>&1")
+
+        test("mkdir in /etc - SHOULD BE BLOCKED",
+             "mkdir /etc/testdir 2>&1")
+
+        # Symlink escape: create symlink in /tmp pointing to protected file
+        test("Symlink escape to /etc/shadow - SHOULD BE BLOCKED",
+             "ln -sf /etc/shadow /tmp/shadow_link && cat /tmp/shadow_link 2>&1")
+
+        # Python file I/O bypasses shell - FUSE catches at VFS level
+        test("Python read /etc/shadow - SHOULD BE BLOCKED",
+             'python3 -c "print(open(\'/etc/shadow\').read())" 2>&1')
+
+        test("Python write to /etc - SHOULD BE BLOCKED",
+             'python3 -c "open(\'/etc/fuse_test\',\'w\').write(\'hack\')" 2>&1')
+
+        test("Python write to /usr/bin - SHOULD BE BLOCKED",
+             'python3 -c "open(\'/usr/bin/evil\',\'w\').write(\'x\')" 2>&1')
+
+        test("Python list /root - SHOULD BE BLOCKED",
+             'python3 -c "import os; print(os.listdir(\'/root\'))" 2>&1')
+
+        # Allowed: file I/O in workspace and /tmp
+        test("cp in workspace - SHOULD BE ALLOWED",
+             "echo 'original' > /home/daytona/cp_src.txt && cp /home/daytona/cp_src.txt /home/daytona/cp_dst.txt && cat /home/daytona/cp_dst.txt")
+
+        test("touch in /tmp - SHOULD BE ALLOWED",
+             "touch /tmp/fuse_test_file && ls -la /tmp/fuse_test_file 2>&1")
+
+        test("Python write to workspace - SHOULD BE ALLOWED",
+             'python3 -c "open(\'/home/daytona/py_test.txt\',\'w\').write(\'hello from python\')" && cat /home/daytona/py_test.txt')
+
+        test("Python write to /tmp - SHOULD BE ALLOWED",
+             'python3 -c "open(\'/tmp/py_test.txt\',\'w\').write(\'temp from python\')" && cat /tmp/py_test.txt')
+
+        # ==================== SOFT DELETE ====================
+        print("\n" + "=" * 60)
+        print("  SOFT DELETE (recoverable file quarantine)")
+        print("=" * 60)
+
+        # Soft delete works through the FUSE workspace mount (relative paths)
+        # Absolute paths bypass FUSE and hit the real filesystem directly
+
+        test("Create file for soft-delete test",
+             "echo 'important data' > soft_delete_test.txt && cat soft_delete_test.txt")
+
+        test("rm file - SHOULD BE SOFT-DELETED (moved to trash)",
+             "rm soft_delete_test.txt 2>&1 && echo 'rm exited 0'")
+
+        test("Verify file is gone from original location",
+             "ls soft_delete_test.txt 2>&1 || echo 'file gone (expected)'")
+
+        test("agentsh trash list - SHOULD SHOW soft-deleted file",
+             "/usr/bin/agentsh trash list 2>&1")
+
+        # Get the token and restore
+        test("Restore soft-deleted file via agentsh trash restore",
+             "token=$(/usr/bin/agentsh trash list 2>&1 | grep soft_delete_test | head -1 | cut -f1) && "
+             "/usr/bin/agentsh trash restore $token 2>&1")
+
+        test("Verify restored file has original content",
+             "cat soft_delete_test.txt 2>&1")
+
         # ==================== SUMMARY ====================
         print("\n" + "=" * 60)
         print("  SUMMARY")
@@ -188,15 +325,44 @@ def main():
         print("""
     Security features demonstrated:
 
+    DIAGNOSTICS:
+      - FUSE mount          -> Verify agentsh VFS interception is active
+      - BASH_ENV             -> Verify builtin disabling is active
+      - kill builtin         -> Verify kill is not a shell builtin
+      - agentsh detect       -> Verify security mode and capabilities
+
     BLOCKED COMMANDS:
       - sudo, su      -> Privilege escalation blocked
-      - kill          -> System commands blocked
+      - kill          -> Blocked (builtin disabled via BASH_ENV)
 
     FILE ACCESS BLOCKING:
-      - /etc, /usr/bin, /var  -> Write denied (Landlock + OS permissions)
+      - /etc, /usr/bin, /var  -> Write denied (Landlock + FUSE + OS permissions)
       - /proc/1/environ      -> Virtual FS (requires kernel enforcement)
       - /home/daytona        -> Read/write allowed (workspace)
       - /tmp                 -> Read/write allowed (temp)
+
+    MULTI-CONTEXT COMMAND BLOCKING:
+      - env/xargs/find -exec sudo -> Blocked across contexts
+      - Nested script sudo         -> Blocked in nested scripts
+      - Direct /usr/bin/sudo       -> Blocked by no-new-privileges
+      - Python subprocess sudo     -> Blocked from Python
+      - Python os.system kill      -> Blocked from Python
+      - env whoami                 -> Allowed (safe command)
+      - Python subprocess ls       -> Allowed (safe command)
+
+    FUSE PROTECTION (VFS-level file interception):
+      - cp/touch/dd/tee to /etc   -> Blocked at VFS level
+      - mkdir in /etc              -> Blocked at VFS level
+      - Symlink escape /etc/shadow -> Path resolved, blocked
+      - Python read /etc/shadow    -> Blocked at VFS level
+      - Python write /etc, /usr    -> Blocked at VFS level
+      - Python list /root          -> Blocked at VFS level
+      - cp/Python workspace, /tmp  -> Allowed
+
+    SOFT DELETE (recoverable file quarantine):
+      - rm file in /home/daytona   -> Moved to .agentsh_trash
+      - agentsh trash list         -> Shows soft-deleted files
+      - agentsh trash restore      -> Restores file to original path
 
     BLOCKED NETWORK:
       - evil.com      -> Returns 400 Bad Request from agentsh proxy
@@ -204,9 +370,11 @@ def main():
     HOW IT WORKS:
       1. /bin/bash replaced with agentsh-shell-shim
       2. HTTPS_PROXY set to agentsh proxy
-      3. All traffic routed through agentsh
-      4. Policy rules (default.yaml) enforce allow/deny
-      5. Landlock (v0.9.5+) adds kernel-level filesystem enforcement
+      3. BASH_ENV disables dangerous builtins (kill, enable, ulimit, etc.)
+      4. Landlock restricts binary execution to system paths
+      5. FUSE intercepts file I/O at VFS level
+      6. Policy rules (default.yaml) enforce allow/deny
+      7. All traffic routed through agentsh proxy
 """)
 
     finally:

@@ -15,15 +15,19 @@ Together, they provide **defense-in-depth**: even if an AI agent is compromised 
 | Threat | Daytona Alone | Daytona + agentsh |
 |--------|---------------|-------------------|
 | `rm -rf /` destroys data | ✅ Contained to sandbox | ✅ **Blocked** by command policy |
+| Agent deletes workspace files | ❌ Files permanently lost | ✅ **Soft-deleted to trash, recoverable** |
 | Agent exfiltrates secrets to `evil.com` | ❌ Network allowed | ✅ **Blocked by domain policy** |
 | Agent reads `~/.aws/credentials` | ❌ File readable | ✅ **Requires approval** |
-| Agent runs `sudo` for privilege escalation | ⚠️ May work in container | ✅ **Command blocked** |
+| Agent runs `sudo` for privilege escalation | ⚠️ Blocked by `no_new_privs` | ✅ **Command blocked + no_new_privs** |
 | Agent accesses cloud metadata (SSRF) | ❌ `169.254.169.254` reachable | ✅ **Blocked by CIDR policy** |
 | `git push --force` rewrites history | ❌ Git works normally | ✅ **Blocked by git safety rules** |
 | Agent leaks API keys to LLM provider | ❌ Data sent as-is | ✅ **Redacted by DLP** |
 | Agent enumerates env vars for secrets | ❌ `env` shows all | ✅ **Iteration blocked** |
 | Nested script makes unauthorized request | ❌ No visibility | ✅ **Depth-aware approval** |
-| Prompt injection triggers reverse shell | ⚠️ `nc` may be available | ✅ **Network tools blocked** |
+| Prompt injection triggers reverse shell | ⚠️ If `nc` installed | ✅ **Network tools blocked by policy** |
+| Agent uses `kill` builtin to disrupt processes | ❌ Builtin bypasses interception | ✅ **Builtin disabled via BASH_ENV** |
+| Python script writes to `/etc` | ❌ Depends on permissions | ✅ **Blocked by FUSE at VFS level** |
+| Python script reads `/etc/shadow` | ❌ Depends on permissions | ✅ **Blocked by FUSE at VFS level** |
 
 ## What agentsh Adds to Daytona
 
@@ -122,6 +126,13 @@ file_rules:
     operations: [delete]
     decision: deny
 
+  # Or use soft_delete for recoverable quarantine:
+  # - name: soft-delete-workspace
+  #   paths: ["${PROJECT_ROOT}/**"]
+  #   operations: [delete]
+  #   decision: soft_delete
+  # Restore via: agentsh trash restore <token>
+
   # Require approval for credential access
   - name: approve-aws-credentials
     paths: ["${HOME}/.aws/**"]
@@ -157,17 +168,19 @@ env_policy:
   block_iteration: true
 ```
 
-**Default blocked secrets** (automatic): AWS credentials, KUBECONFIG, GITHUB_TOKEN, LD_PRELOAD, PYTHONPATH, BASH_ENV, and more.
+**Default blocked secrets** (automatic): AWS credentials, KUBECONFIG, GITHUB_TOKEN, LD_PRELOAD, PYTHONPATH, and more. Note: `BASH_ENV` is blocked by default in `env_policy`, but `env_inject` bypasses this to allow operator-controlled injection of the agentsh startup script.
 
 ### 4b. Environment Variable Injection (v0.8.9)
 
 Operators can inject trusted variables that bypass policy filtering:
 
 ```yaml
-# In config.yaml
-env_inject:
-  AGENTSH_SERVER: "http://127.0.0.1:18080"
-  CUSTOM_VAR: "operator-controlled-value"
+# In config.yaml (under sandbox:)
+sandbox:
+  env_inject:
+    AGENTSH_SERVER: "http://127.0.0.1:18080"
+    BASH_ENV: "/usr/lib/agentsh/bash_startup.sh"
+    CUSTOM_VAR: "operator-controlled-value"
 ```
 
 This ensures critical configuration reaches all processes regardless of `env_policy` restrictions.
@@ -201,6 +214,99 @@ audit:
   retention_days: 90
 ```
 
+### 7. FUSE Filesystem Interception (v0.9.9)
+
+FUSE provides VFS-level file interception that enforces policy rules on all file I/O, regardless of how it's invoked. This catches file operations from Python scripts, compiled binaries, and any other process — not just shell commands:
+
+```yaml
+# In config.yaml
+sandbox:
+  fuse:
+    enabled: true
+    deferred: true
+    deferred_marker_file: "/dev/fuse"
+    audit:
+      enabled: true
+      mode: "soft_delete"
+      trash_path: "/home/daytona/.agentsh_trash"
+```
+
+The daytona user is added to the `fuse` group in the Dockerfile, so `/dev/fuse` is accessible without `sudo`. This avoids the `no_new_privs` restriction that blocks `sudo` in containers.
+
+With FUSE enabled, even `python3 -c "open('/etc/shadow').read()"` is blocked by the file policy rules. Without FUSE, file access control relies solely on Landlock and OS permissions.
+
+When `audit.mode` is set to `soft_delete`, file deletions matching `decision: soft_delete` rules are intercepted and moved to a trash directory instead of being permanently deleted. Files can be recovered via:
+
+```bash
+# List soft-deleted files
+agentsh trash list
+
+# Restore a specific file
+agentsh trash restore <token>
+
+# Purge old trash entries
+agentsh trash purge --ttl 24h
+```
+
+### 8. Bash Builtin Disabling (v0.10.0)
+
+Bash builtins like `kill`, `enable`, `ulimit`, and `umask` bypass external command interception because they execute inside the shell process itself. agentsh ships a startup script that disables these builtins:
+
+```bash
+# /usr/lib/agentsh/bash_startup.sh (installed by agentsh .deb)
+enable -n kill enable ulimit umask builtin command
+```
+
+This is activated via `BASH_ENV` in the operator-controlled `env_inject` config, which bypasses `env_policy` deny rules:
+
+```yaml
+# In config.yaml (under sandbox:)
+sandbox:
+  env_inject:
+    BASH_ENV: "/usr/lib/agentsh/bash_startup.sh"
+```
+
+Once active, `kill -9 1` will fail with "kill: not a shell builtin" instead of silently succeeding.
+
+### 9. Landlock Filesystem Enforcement (v0.9.5)
+
+Landlock restricts which directories allow binary execution at the kernel level:
+
+```yaml
+# In config.yaml
+sandbox:
+  landlock:
+    enabled: true
+    allow_execute:
+      - /usr/bin
+      - /bin
+      - /usr/local/bin
+      - /usr/sbin
+      - /sbin
+      - /usr/lib
+      - /lib
+    network:
+      allow_connect_tcp: true
+      allow_bind_tcp: true
+```
+
+This prevents executing binaries dropped into `/tmp`, `/home`, or other writable directories.
+
+### 10. OpenTelemetry Event Export (v0.10.0)
+
+Export audit events to an OpenTelemetry collector for centralized monitoring:
+
+```yaml
+audit:
+  otel:
+    enabled: true
+    endpoint: "localhost:4317"
+    protocol: "grpc"
+    filter:
+      include_categories: ["file", "process"]
+      min_risk_level: "medium"
+```
+
 ## Supported AI Coding Agents
 
 - **Claude Code** - Anthropic's AI coding assistant
@@ -223,18 +329,18 @@ audit:
 ```bash
 git clone <this-repo>
 cd daytona-test
-docker build -t daytona-agentsh:v0.8.10 .
+docker build -t daytona-agentsh:v0.10.0 .
 ```
 
 ### 2. Test locally
 
 ```bash
 # Test that evil.com is blocked
-docker run --rm daytona-agentsh:v0.8.10 bash -c 'curl -s https://evil.com'
+docker run --rm daytona-agentsh:v0.10.0 bash -c 'curl -s https://evil.com'
 # Output: blocked by policy (rule=block-evil-domains)
 
 # Test that sudo is blocked
-docker run --rm daytona-agentsh:v0.8.10 bash -c 'sudo whoami'
+docker run --rm daytona-agentsh:v0.10.0 bash -c 'sudo whoami'
 # Output: command blocked
 ```
 
@@ -243,7 +349,7 @@ docker run --rm daytona-agentsh:v0.8.10 bash -c 'sudo whoami'
 ```bash
 daytona login --api-key YOUR_API_KEY
 
-daytona snapshot push daytona-agentsh:v0.8.0 \
+daytona snapshot push daytona-agentsh:v0.10.0 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
@@ -288,6 +394,9 @@ python example.py
 │  │  │  │  • DLP (redact secrets before LLM)                  │    │  │  │
 │  │  │  │  • Audit logging (all operations)                   │    │  │  │
 │  │  │  │  • Depth-aware policies (v0.8.1)                    │    │  │  │
+│  │  │  │  • FUSE filesystem interception (v0.9.9)            │    │  │  │
+│  │  │  │  • Landlock filesystem enforcement (v0.9.5)         │    │  │  │
+│  │  │  │  • Bash builtin disabling via BASH_ENV (v0.10.0)    │    │  │  │
 │  │  │  └─────────────────────────────────────────────────────┘    │  │  │
 │  │  └─────────────────────────────────────────────────────────────┘  │  │
 │  │                                                                   │  │
@@ -330,16 +439,16 @@ Daytona provides **100% protection score** with full security mode, including al
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | agentsh server settings (logging, DLP, audit) |
+| `config.yaml` | agentsh server settings (logging, DLP, audit, FUSE, Landlock, BASH_ENV) |
 | `default.yaml` | Security policy (commands, network, files, env) |
-| `Dockerfile` | Container image with agentsh v0.9.8 |
-| `example.py` | Python SDK demo |
+| `Dockerfile` | Container image with agentsh v0.10.0, python3, fuse group |
+| `example.py` | Python SDK integration tests (diagnostics + security across 7 categories) |
 
 ### Key Policy Sections
 
 **Command Rules** - What programs can run and with what arguments
 **Network Rules** - Which domains/IPs are allowed, blocked, or require approval
-**File Rules** - Read/write/delete permissions, soft-delete, credential protection
+**File Rules** - Read/write/delete permissions, soft-delete quarantine, credential protection
 **Env Policy** - Which environment variables are visible to agents
 **Resource Limits** - Memory, CPU, process count, timeouts
 **Audit** - What to log and how long to retain
@@ -376,6 +485,28 @@ file_rules:
 ```
 
 ## Known Limitations
+
+### Seccomp execve interception in containers
+
+agentsh supports intercepting `execve` syscalls via seccomp user-notify for command policy enforcement from any execution context (not just the shell shim). However, **Daytona's container seccomp profile prevents installing custom seccomp filters**, so this feature cannot be enabled in container environments.
+
+**Impact:** Command policy enforcement relies on the shell shim and container-level protections (e.g., `no-new-privileges`). Commands invoked through the shell shim are still fully policy-enforced. The container's own `no-new-privileges` flag independently blocks `sudo` and similar privilege escalation from all execution contexts. Bash builtins (which bypass all external interception) are handled separately via `BASH_ENV` — see [Bash Builtin Disabling](#8-bash-builtin-disabling-v0100).
+
+**Workaround:** On hosts with full kernel access (non-containerized), enable seccomp in `config.yaml`:
+```yaml
+sandbox:
+  seccomp:
+    execve:
+      enabled: true
+```
+
+### `bash_startup.sh` builtin disabling order
+
+The `bash_startup.sh` script disables builtins using `enable -n kill enable ulimit umask builtin command`. Because `enable` itself is disabled on line 4 (before `ulimit`, `umask`, `builtin`, and `command` on subsequent lines), those later builtins may not be fully disabled in multi-line versions of the script.
+
+**Impact:** `kill` and `enable` are reliably disabled. `ulimit`, `umask`, `builtin`, and `command` may remain active depending on the script layout. In practice, `ulimit` and `umask` are low-risk, and `builtin`/`command` are covered by the command policy rules in `default.yaml` as a secondary layer.
+
+**Workaround:** Use a single-line `enable -n` invocation (as shown above) to disable all builtins atomically before `enable` is removed. This is the current default.
 
 ### `/proc` filesystem access in containers
 
@@ -416,7 +547,8 @@ docker run ... bash -c 'cat /var/log/agentsh/*.log'
 
 ## Version History
 
-- **v0.9.8** - Updated to agentsh 0.9.8, Landlock filesystem enforcement, file access blocking tests, removed soft_delete (use deny), documented /proc limitation
+- **v0.10.0** - Updated to agentsh 0.10.0, fixed FUSE deferred mount (removed sudo dependency, use /dev/fuse marker with fuse group), added BASH_ENV injection to disable dangerous builtins (kill, enable, ulimit), added Landlock execution path restrictions, enabled soft_delete with FUSE audit mode for recoverable file quarantine, added diagnostic tests, OpenTelemetry event export support, documented seccomp container limitation
+- **v0.9.8** - Updated to agentsh 0.9.8, Landlock filesystem enforcement, file access blocking tests, changed delete policy from soft_delete to deny, documented /proc limitation
 - **v0.9.2** - Updated to agentsh 0.9.2, dns_redirect and connect_redirect support
 - **v0.8.10** - Updated to agentsh 0.8.10, added depth-aware command policies, env_inject support, bash builtin blocking
 

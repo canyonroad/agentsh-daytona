@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ARG AGENTSH_REPO=canyonroad/agentsh
-ARG AGENTSH_TAG=v0.9.8
+ARG AGENTSH_TAG=v0.10.0
 ARG DEB_ARCH=amd64
 
 # Install base dependencies
@@ -14,6 +14,7 @@ RUN apt-get update && \
         sudo \
         libseccomp2 \
         fuse3 \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install agentsh
@@ -39,12 +40,16 @@ RUN mkdir -p /etc/agentsh/policies \
 # Copy the agent sandbox policy as the default policy
 COPY default.yaml /etc/agentsh/policies/default.yaml
 
-# Copy custom config with seccomp enabled for command interception
+# Copy custom config (FUSE, Landlock, BASH_ENV, network interception)
 COPY config.yaml /etc/agentsh/config.yaml
 
 # Create a non-root user for Daytona (BEFORE shim install to avoid agentsh interception)
-RUN useradd -m -s /bin/bash daytona && \
+# Create fuse group (fuse3 package doesn't create it on Ubuntu 22.04)
+# Enable user_allow_other in fuse.conf for FUSE mounts
+RUN groupadd -f fuse && \
+    useradd -m -s /bin/bash -G fuse daytona && \
     echo "daytona ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    echo "user_allow_other" >> /etc/fuse.conf && \
     chown -R daytona:daytona /var/lib/agentsh /var/log/agentsh
 
 # Install the shell shim LAST - replaces /bin/bash with agentsh interceptor

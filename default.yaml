@@ -1,19 +1,21 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.9.8
+# Updated for agentsh v0.10.0
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking
 # New in v0.9.0: dns_redirect and connect_redirect support
 # New in v0.9.3: agent wrap, cross-platform exec interception
 # New in v0.9.5: Landlock filesystem enforcement (kernel 5.13+)
+# New in v0.9.9: FUSE filesystem interception
+# New in v0.10.0: BASH_ENV builtin disabling, Landlock execution paths
 
 version: 1
 name: default
 description: |
   High-security sandbox for AI agents running in Daytona sandboxes.
   Default deny with explicit allowlist, approval for any credential access,
-  redirect network tools to internal proxies, soft-delete for recovery.
+  deny file deletion (soft_delete available for recoverable quarantine).
   Includes git safety rules and environment variable protection.
 
 # =============================================================================
@@ -22,7 +24,10 @@ description: |
 
 file_rules:
   # ---------------------------------------------------------------------------
-  # Workspace - read/write allowed, deletes are soft (recoverable)
+  # Workspace - read/write allowed, deletes denied
+  # To enable recoverable quarantine instead, change decision to soft_delete:
+  #   decision: soft_delete
+  # Soft-deleted files can be restored via: agentsh trash restore <token>
   # ---------------------------------------------------------------------------
 
   - name: allow-workspace-read
@@ -71,6 +76,8 @@ file_rules:
     paths:
       - "/home/daytona"
       - "/home/daytona/**"
+      - "/workspace"
+      - "/workspace/**"
     operations:
       - read
       - write
@@ -84,15 +91,16 @@ file_rules:
       - readlink
     decision: allow
 
-  - name: deny-delete-daytona-home
-    description: Deny deleting files in Daytona home
+  - name: soft-delete-daytona-home
+    description: Soft-delete files in Daytona home (recoverable quarantine)
     paths:
       - "/home/daytona/**"
+      - "/workspace/**"
     operations:
       - delete
       - rmdir
-    decision: deny
-    message: "File deletion denied: {{.Path}}"
+    decision: soft_delete
+    message: "File soft-deleted (recoverable): {{.Path}}"
 
   # ---------------------------------------------------------------------------
   # Temp directories - sandboxed
@@ -147,17 +155,17 @@ file_rules:
       - readlink
     decision: allow
 
-  - name: allow-etc-minimal
-    description: Read minimal config files
+  - name: allow-etc-read
+    description: Read access to /etc for system configuration
     paths:
-      - "/etc/hosts"
-      - "/etc/resolv.conf"
-      - "/etc/ssl/certs/**"
-      - "/etc/ca-certificates/**"
-      - "/etc/localtime"
+      - "/etc"
+      - "/etc/**"
     operations:
       - read
+      - open
       - stat
+      - list
+      - readlink
     decision: allow
 
   # ---------------------------------------------------------------------------
@@ -253,6 +261,22 @@ file_rules:
     operations:
       - "*"
     decision: deny
+
+  - name: allow-dev-run
+    description: Allow access to device and runtime files
+    paths:
+      - "/dev/**"
+      - "/run/**"
+      - "/var/lib/agentsh/**"
+      - "/var/log/agentsh/**"
+    operations:
+      - read
+      - open
+      - stat
+      - list
+      - readlink
+      - write
+    decision: allow
 
   - name: default-deny-files
     description: Deny all other file operations
@@ -607,6 +631,9 @@ command_rules:
 
   # ---------------------------------------------------------------------------
   # v0.8.9: Block bash builtins that can bypass seccomp protections
+  # Note: Primary enforcement is via BASH_ENV (config.yaml env_inject) which
+  # disables these builtins at shell startup. These command rules are a
+  # secondary layer for non-bash shells or if BASH_ENV is not active.
   # ---------------------------------------------------------------------------
 
   - name: block-bash-builtins
