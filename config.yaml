@@ -1,5 +1,5 @@
 # agentsh server configuration for Daytona sandbox
-# Updated for agentsh v0.10.0
+# Updated for agentsh v0.10.4
 # Policy-based security mode (relies on default.yaml for enforcement)
 
 server:
@@ -40,7 +40,7 @@ audit:
     max_age_days: 90
 
 # =============================================================================
-# SECURITY CONFIGURATION (v0.10.0)
+# SECURITY CONFIGURATION (v0.10.4)
 # =============================================================================
 
 # Simplified security - rely on policy rules in default.yaml

@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ARG AGENTSH_REPO=canyonroad/agentsh
-ARG AGENTSH_TAG=v0.10.0
+ARG AGENTSH_TAG=v0.10.4
 ARG DEB_ARCH=amd64
 
 # Install base dependencies
@@ -61,7 +61,10 @@ RUN agentsh shim install-shell \
     --i-understand-this-modifies-the-host
 
 # Configure agentsh for runtime
+# AGENTSH_SHIM_FORCE=1 ensures the shim routes through agentsh even without a TTY
+# (Daytona runs commands via HTTP API with no TTY attached)
 ENV AGENTSH_SERVER=http://127.0.0.1:18080
+ENV AGENTSH_SHIM_FORCE=1
 
 USER daytona
 WORKDIR /home/daytona

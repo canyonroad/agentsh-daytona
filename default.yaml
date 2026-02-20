@@ -1,6 +1,6 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.10.0
+# Updated for agentsh v0.10.4
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking

@@ -329,18 +329,18 @@ audit:
 ```bash
 git clone <this-repo>
 cd daytona-test
-docker build -t daytona-agentsh:v0.10.0 .
+docker build -t daytona-agentsh:v0.10.4 .
 ```
 
 ### 2. Test locally
 
 ```bash
 # Test that evil.com is blocked
-docker run --rm daytona-agentsh:v0.10.0 bash -c 'curl -s https://evil.com'
+docker run --rm daytona-agentsh:v0.10.4 bash -c 'curl -s https://evil.com'
 # Output: blocked by policy (rule=block-evil-domains)
 
 # Test that sudo is blocked
-docker run --rm daytona-agentsh:v0.10.0 bash -c 'sudo whoami'
+docker run --rm daytona-agentsh:v0.10.4 bash -c 'sudo whoami'
 # Output: command blocked
 ```
 
@@ -349,7 +349,7 @@ docker run --rm daytona-agentsh:v0.10.0 bash -c 'sudo whoami'
 ```bash
 daytona login --api-key YOUR_API_KEY
 
-daytona snapshot push daytona-agentsh:v0.10.0 \
+daytona snapshot push daytona-agentsh:v0.10.4 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
@@ -441,7 +441,7 @@ Daytona provides **100% protection score** with full security mode, including al
 |------|---------|
 | `config.yaml` | agentsh server settings (logging, DLP, audit, FUSE, Landlock, BASH_ENV) |
 | `default.yaml` | Security policy (commands, network, files, env) |
-| `Dockerfile` | Container image with agentsh v0.10.0, python3, fuse group |
+| `Dockerfile` | Container image with agentsh v0.10.4, python3, fuse group |
 | `example.py` | Python SDK integration tests (diagnostics + security across 7 categories) |
 
 ### Key Policy Sections
@@ -547,6 +547,7 @@ docker run ... bash -c 'cat /var/log/agentsh/*.log'
 
 ## Version History
 
+- **v0.10.4** - Updated to agentsh 0.10.4, performance fixes
 - **v0.10.0** - Updated to agentsh 0.10.0, fixed FUSE deferred mount (removed sudo dependency, use /dev/fuse marker with fuse group), added BASH_ENV injection to disable dangerous builtins (kill, enable, ulimit), added Landlock execution path restrictions, enabled soft_delete with FUSE audit mode for recoverable file quarantine, added diagnostic tests, OpenTelemetry event export support, documented seccomp container limitation
 - **v0.9.8** - Updated to agentsh 0.9.8, Landlock filesystem enforcement, file access blocking tests, changed delete policy from soft_delete to deny, documented /proc limitation
 - **v0.9.2** - Updated to agentsh 0.9.2, dns_redirect and connect_redirect support
