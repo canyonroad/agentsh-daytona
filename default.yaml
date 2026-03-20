@@ -1,6 +1,6 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.10.4
+# Updated for agentsh v0.16.5
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking
@@ -15,7 +15,7 @@ name: default
 description: |
   High-security sandbox for AI agents running in Daytona sandboxes.
   Default deny with explicit allowlist, approval for any credential access,
-  deny file deletion (soft_delete available for recoverable quarantine).
+  soft-delete file quarantine (recoverable via agentsh trash restore).
   Includes git safety rules and environment variable protection.
 
 # =============================================================================
@@ -24,9 +24,7 @@ description: |
 
 file_rules:
   # ---------------------------------------------------------------------------
-  # Workspace - read/write allowed, deletes denied
-  # To enable recoverable quarantine instead, change decision to soft_delete:
-  #   decision: soft_delete
+  # Workspace - read/write allowed, deletes soft-deleted (recoverable quarantine)
   # Soft-deleted files can be restored via: agentsh trash restore <token>
   # ---------------------------------------------------------------------------
 
@@ -56,16 +54,16 @@ file_rules:
       - rename
     decision: allow
 
-  - name: deny-delete-workspace
-    description: Deny deleting files in workspace (use rm individually)
+  - name: soft-delete-workspace
+    description: Soft-delete files in workspace (recoverable quarantine)
     paths:
       - "${PROJECT_ROOT}"
       - "${PROJECT_ROOT}/**"
     operations:
       - delete
       - rmdir
-    decision: deny
-    message: "File deletion denied in workspace: {{.Path}}"
+    decision: soft_delete
+    message: "File soft-deleted (recoverable): {{.Path}}"
 
   # ---------------------------------------------------------------------------
   # Daytona-specific paths
