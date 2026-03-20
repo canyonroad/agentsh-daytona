@@ -149,7 +149,6 @@ python example.py
 ## Related Projects
 
 - [agentsh](https://github.com/canyonroad/agentsh) -- Runtime security for AI agents ([docs](https://www.agentsh.org/docs/))
-- [agentsh + Blaxel](https://github.com/canyonroad/agentsh-blaxel) -- agentsh integration with Blaxel sandboxes
 - [Daytona](https://daytona.io) -- Sandbox infrastructure for AI agents
 
 ## License
