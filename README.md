@@ -1,6 +1,6 @@
 # agentsh + Daytona
 
-Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.8 with [Daytona](https://daytona.io) sandboxes.
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.9 with [Daytona](https://daytona.io) sandboxes.
 
 ## Why agentsh + Daytona?
 
@@ -65,10 +65,10 @@ git clone https://github.com/canyonroad/agentsh-daytona
 cd agentsh-daytona
 
 # Build the image
-docker build -t daytona-agentsh:v0.16.8 .
+docker build -t daytona-agentsh:v0.16.9 .
 
 # Push as a Daytona snapshot
-daytona snapshot push daytona-agentsh:v0.16.8 \
+daytona snapshot push daytona-agentsh:v0.16.9 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
@@ -122,7 +122,7 @@ See the [agentsh documentation](https://www.agentsh.org/docs/) for the full poli
 
 ```
 agentsh-daytona/
-├── Dockerfile          # Container image with agentsh v0.16.8
+├── Dockerfile          # Container image with agentsh v0.16.9
 ├── config.yaml         # Server config (FUSE, Landlock, DLP, network)
 ├── default.yaml        # Security policy (commands, network, files, env)
 └── example.py          # Python SDK integration tests (30+ tests)
