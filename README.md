@@ -1,6 +1,6 @@
 # agentsh + Daytona
 
-Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.9 with [Daytona](https://daytona.io) sandboxes.
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.18.0 with [Daytona](https://daytona.io) sandboxes.
 
 ## Why agentsh + Daytona?
 
@@ -65,10 +65,10 @@ git clone https://github.com/canyonroad/agentsh-daytona
 cd agentsh-daytona
 
 # Build the image
-docker build -t daytona-agentsh:v0.16.9 .
+docker build -t daytona-agentsh:v0.18.0 .
 
 # Push as a Daytona snapshot
-daytona snapshot push daytona-agentsh:v0.16.9 \
+daytona snapshot push daytona-agentsh:v0.18.0 \
   --name "agentsh-sandbox" \
   --cpu 2 \
   --memory 2 \
@@ -122,7 +122,7 @@ See the [agentsh documentation](https://www.agentsh.org/docs/) for the full poli
 
 ```
 agentsh-daytona/
-├── Dockerfile          # Container image with agentsh v0.16.9
+├── Dockerfile          # Container image with agentsh v0.18.0
 ├── config.yaml         # Server config (FUSE, Landlock, DLP, network)
 ├── default.yaml        # Security policy (commands, network, files, env)
 └── example.py          # Python SDK integration tests (30+ tests)
@@ -145,6 +145,56 @@ export DAYTONA_API_KEY="your-api-key"
 export DAYTONA_API_URL="https://app.daytona.io/api"
 python example.py
 ```
+
+## Protection Score
+
+agentsh v0.18.0 scores **85/100** inside a Daytona sandbox. Run `agentsh detect` inside the sandbox to see the full breakdown:
+
+| Category | Score | Backend | What it does |
+|---|---|---|---|
+| **File Protection** | 25/25 | FUSE + Landlock v5 + seccomp-notify | VFS-level file interception, kernel path restrictions, soft-delete quarantine |
+| **Command Control** | 25/25 | seccomp-execve | Every `execve` syscall intercepted and checked against policy |
+| **Network** | 20/20 | landlock-network | TCP bind/connect filtering on all outbound connections |
+| **Isolation** | 15/15 | capability-drop | All 41 Linux capabilities dropped from the permitted set |
+| **Resource Limits** | 0/15 | cgroups v2 (unavailable) | CPU/memory/process limits -- blocked by cgroup permissions |
+
+The 15 missing points are from cgroups v2. Daytona enforces resource limits at the container level (`--cpu`, `--memory`, `--disk` on snapshot push), so the actual protection is complete -- agentsh just can't claim credit for limits it doesn't control.
+
+## For Daytona Engineers
+
+The following sandbox runtime changes would let agentsh reach 100/100 and close remaining gaps:
+
+### 1. Delegate a writable cgroup slice (would give +15 pts, reaching 100/100)
+
+agentsh needs write access to a cgroup subtree to enforce per-process CPU, memory, and PID limits. Currently the parent cgroup's `subtree_control` is not writable (EACCES), and `mkdir /sys/fs/cgroup/agentsh.slice` fails.
+
+**What to change:** Create a dedicated cgroup slice for the sandbox process and mount it writable. For example:
+- Run the container with `--cgroupns=private` and delegate `+cpu +memory +pids` in `subtree_control`
+- Or pre-create `/sys/fs/cgroup/agentsh.slice` owned by the sandbox user with the appropriate controllers enabled
+
+This would let agentsh enforce `resource_limits` from the policy (max_memory_mb, cpu_quota_percent, pids_max) independently of Daytona's container-level limits -- useful for per-command and per-session granularity.
+
+### 2. Block /proc/1/environ access
+
+Currently readable inside the sandbox and leaks environment variables (HOSTNAME, DAYTONA_SANDBOX_ID, PATH, etc.). The test output:
+
+```
+cat /proc/1/environ | tr '\0' '\n' | head -3
+PATH=/usr/local/sbin:/usr/local/bin:...
+HOSTNAME=<sandbox-id>
+DAYTONA_SANDBOX_ID=<sandbox-id>
+```
+
+agentsh's policy denies `/proc/**` writes and blocks `/proc/*/environ` reads, but `/proc` is a virtual kernel filesystem that Landlock and FUSE cannot intercept. **This requires container-level enforcement** -- either:
+- Mount `/proc` with `hidepid=2` so processes can only see their own `/proc/[pid]` entries
+- Or use a seccomp profile that blocks `openat` on `/proc/1/environ` paths
+- Or mask `/proc/1/environ` via the container runtime (e.g., Docker's `--security-opt`)
+
+### 3. PID namespace isolation (cosmetic, no score impact)
+
+The sandbox currently runs in the host PID namespace. While agentsh blocks `kill`/`killall`/`pkill` via policy and capability-drop prevents actual signal delivery, a private PID namespace would be cleaner -- the agent process would be PID 1 and unable to enumerate host processes.
+
+**What to change:** Run the sandbox container with a separate PID namespace (`--pid=private` or equivalent in the Daytona runtime).
 
 ## Related Projects
 

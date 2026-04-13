@@ -1,6 +1,6 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.16.9
+# Updated for agentsh v0.18.0
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking
@@ -9,6 +9,8 @@
 # New in v0.9.5: Landlock filesystem enforcement (kernel 5.13+)
 # New in v0.9.9: FUSE filesystem interception
 # New in v0.10.0: BASH_ENV builtin disabling, Landlock execution paths
+# New in v0.17.0: Declared http_services with /svc routing, secret providers
+# New in v0.18.0: Unified http_services declaration, HMAC chain tamper-evidence
 
 version: 1
 name: default

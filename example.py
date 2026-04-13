@@ -42,9 +42,9 @@ def main():
     daytona = Daytona()
 
     # Create sandbox
-    print("[2] Creating sandbox from agentsh-sandbox-v48 snapshot...")
+    print("[2] Creating sandbox from agentsh-sandbox-v49 snapshot...")
     params = CreateSandboxFromSnapshotParams(
-        snapshot="agentsh-sandbox-v48",
+        snapshot="agentsh-sandbox-v49",
         auto_stop_interval=30
     )
     sandbox = daytona.create(params=params, timeout=120)

@@ -1,5 +1,5 @@
 # agentsh server configuration for Daytona sandbox
-# Updated for agentsh v0.16.9
+# Updated for agentsh v0.18.0
 # Policy-based security mode (relies on default.yaml for enforcement)
 
 server:
@@ -40,7 +40,7 @@ audit:
     max_age_days: 90
 
 # =============================================================================
-# SECURITY CONFIGURATION (v0.16.9)
+# SECURITY CONFIGURATION (v0.18.0)
 # =============================================================================
 
 # Simplified security - rely on policy rules in default.yaml
@@ -51,6 +51,8 @@ audit:
 # v0.9.5: Landlock filesystem enforcement (kernel 5.13+)
 # v0.9.9: FUSE filesystem interception with deferred mounting
 # v0.10.0: BASH_ENV injection for builtin disabling, Landlock execution paths
+# v0.17.0: Declared http_services with /svc routing, secret providers
+# v0.18.0: Unified http_services declaration, HMAC chain tamper-evidence
 
 sandbox:
   enabled: true
