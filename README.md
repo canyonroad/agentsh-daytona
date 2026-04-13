@@ -174,7 +174,7 @@ agentsh needs write access to a cgroup subtree to enforce per-process CPU, memor
 
 This would let agentsh enforce `resource_limits` from the policy (max_memory_mb, cpu_quota_percent, pids_max) independently of Daytona's container-level limits -- useful for per-command and per-session granularity.
 
-### 2. Block /proc/1/environ access
+### 2. Block /proc/1/environ access (requires runtime change)
 
 Currently readable inside the sandbox and leaks environment variables (HOSTNAME, DAYTONA_SANDBOX_ID, PATH, etc.). The test output:
 
@@ -185,10 +185,15 @@ HOSTNAME=<sandbox-id>
 DAYTONA_SANDBOX_ID=<sandbox-id>
 ```
 
-agentsh's policy denies `/proc/**` writes and blocks `/proc/*/environ` reads, but `/proc` is a virtual kernel filesystem that Landlock and FUSE cannot intercept. **This requires container-level enforcement** -- either:
+**Why this can't be fixed from the image:** We investigated two approaches:
+
+1. **agentsh seccomp file_monitor** (`enforce_without_fuse: true`) -- agentsh can intercept `openat` on `/proc` via seccomp-notify, but installing the seccomp filter fails because Daytona's no-new-privileges flag blocks the `seccomp()` syscall.
+2. **Entrypoint chmod** -- `chmod 000 /proc/1/environ` in a root entrypoint doesn't work because `/proc` is a virtual kernel filesystem; the kernel ignores permission changes and controls access based on process ownership.
+
+Landlock and FUSE also cannot intercept `/proc` (it's not a regular filesystem). **This requires container-level enforcement** -- either:
 - Mount `/proc` with `hidepid=2` so processes can only see their own `/proc/[pid]` entries
-- Or use a seccomp profile that blocks `openat` on `/proc/1/environ` paths
-- Or mask `/proc/1/environ` via the container runtime (e.g., Docker's `--security-opt`)
+- Or mask `/proc/1/environ` via the container runtime (Docker `--security-opt`)
+- Or relax the seccomp profile to allow agentsh to install its file_monitor filter (then agentsh handles the blocking via policy)
 
 ### 3. PID namespace isolation (cosmetic, no score impact)
 

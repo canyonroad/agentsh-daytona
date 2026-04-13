@@ -68,13 +68,16 @@ sandbox:
     intercept_mode: "all"
     proxy_listen_addr: "127.0.0.1:0"
 
-  # v0.8.1: Execve interception - disabled for container environments
-  # Daytona's container seccomp profile prevents installing custom seccomp filters
-  # Enable this on hosts with full kernel support for syscall interception
-  # Note: Bash builtins (kill, enable, etc.) are handled by BASH_ENV instead
+  # v0.8.1: Seccomp file_monitor can enforce file_rules on ALL paths (including
+  # /proc, /sys) via openat/stat interception. However, installing seccomp filters
+  # requires privileges that Daytona's container runtime does not grant (the
+  # no-new-privileges flag blocks seccomp() syscalls). If Daytona relaxes this,
+  # enable the following to block /proc/1/environ reads at the syscall level:
   # seccomp:
-  #   execve:
+  #   file_monitor:
   #     enabled: true
+  #     enforce_without_fuse: true
+  #     intercept_metadata: true
 
   # v0.9.9: FUSE filesystem interception with deferred mounting for containers
   # Use /dev/fuse as marker (daytona user is in fuse group, no sudo needed)
