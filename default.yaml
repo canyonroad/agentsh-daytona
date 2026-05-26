@@ -1,6 +1,6 @@
 # Agent Sandbox Policy for agentsh + Daytona
 # Maximum containment for running unknown/untrusted agent code
-# Updated for agentsh v0.18.0
+# Updated for agentsh v0.20.2
 #
 # New in v0.8.1: Depth-aware command policies (context: [direct, nested])
 # New in v0.8.9: env_inject support, bash builtin blocking
@@ -11,6 +11,12 @@
 # New in v0.10.0: BASH_ENV builtin disabling, Landlock execution paths
 # New in v0.17.0: Declared http_services with /svc routing, secret providers
 # New in v0.18.0: Unified http_services declaration, HMAC chain tamper-evidence
+# New in v0.19.0: Per-AF_* socket family blocking
+# New in v0.19.3: Dirty Frag mitigation_sets, protocol-aware socket tuple rules
+# New in v0.20.0: PostgreSQL access proxy, attach-only cgroup mode
+# New in v0.20.1: policies.symlink_escape knob (see config.yaml)
+# New in v0.20.2: opaque shell-c runs under execve interception (ptrace) instead
+#                 of being pre-denied; see config.yaml sandbox.ptrace
 
 version: 1
 name: default

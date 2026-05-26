@@ -1,5 +1,5 @@
 # agentsh server configuration for Daytona sandbox
-# Updated for agentsh v0.18.0
+# Updated for agentsh v0.20.2
 # Policy-based security mode (relies on default.yaml for enforcement)
 
 server:
@@ -40,7 +40,7 @@ audit:
     max_age_days: 90
 
 # =============================================================================
-# SECURITY CONFIGURATION (v0.18.0)
+# SECURITY CONFIGURATION (v0.20.2)
 # =============================================================================
 
 # Simplified security - rely on policy rules in default.yaml
@@ -53,10 +53,28 @@ audit:
 # v0.10.0: BASH_ENV injection for builtin disabling, Landlock execution paths
 # v0.17.0: Declared http_services with /svc routing, secret providers
 # v0.18.0: Unified http_services declaration, HMAC chain tamper-evidence
+# v0.19.0: Per-AF_* socket family blocking (seccomp-bpf with ptrace fallback)
+# v0.19.1: Shim-installed kernel enforcement (seccomp wrapper at the kernel layer)
+# v0.19.3: Dirty Frag mitigation_sets, protocol-aware socket tuple rules
+#          (NOTE: sandbox.seccomp.hardening_profiles was removed -> mitigation_sets)
+# v0.20.0: PostgreSQL access proxy, attach-only cgroup mode, eBPF hardening
+# v0.20.1: FUSE symlink venv fix + policies.symlink_escape knob, Watchtower PolicyPush
+# v0.20.2: opaque shell-c is interception-aware (runs under ptrace/seccomp-execve
+#          instead of being pre-denied) + sandbox.seccomp.shellc.opaque knob;
+#          config validate hardened; command -v allowed; symlink_escape=deny no
+#          longer blanket-denies a symlinked cwd
 
 sandbox:
   enabled: true
   allow_degraded: true
+
+  # v0.20.2: disable the unix-socket exec wrapper. With unix_sockets enabled the
+  # v0.19+ shim routes every exec through agentsh-unixwrap, which loads a seccomp
+  # filter; in Daytona that load fails (no-new-privileges) and EVERY command exits
+  # 1 ("seccomp: filter Load failed ... agentsh-unixwrap"). Disabling it bypasses
+  # the wrapper so commands run under the shim + FUSE/Landlock without seccomp.
+  unix_sockets:
+    enabled: false
 
   limits:
     max_memory_mb: 4096
@@ -104,6 +122,45 @@ sandbox:
     network:
       allow_connect_tcp: true
       allow_bind_tcp: true
+
+  # v0.20.2: opaque shell-c handling (issue #375 fix).
+  # The v0.19+ shim, by default (shellc.opaque=enforce), pre-denies any `bash -c`
+  # script it can't statically prove safe (anything with a pipe/redirect/$VAR/etc.)
+  # unless runtime execve interception is active. In Daytona we CANNOT enable that
+  # interception: seccomp filters can't be installed (no-new-privileges), and the
+  # ptrace path also fails because agentsh-unixwrap loads a seccomp prefilter
+  # (observed at runtime: "seccomp: filter Load failed ... agentsh-unixwrap").
+  # So we permit opaque shell-c to RUN without per-exec enforcement. Still enforced:
+  # FUSE file rules, Landlock exec paths, the network proxy, and shim pre-checks on
+  # non-opaque commands (sudo/su -> block-shell-escape). Tradeoff: a blocked command
+  # hidden *inside* an opaque script is backstopped by the container
+  # (no-new-privileges + capability drop), not by agentsh per-exec policy.
+  seccomp:
+    shellc:
+      opaque: allow
+
+  # v0.20.2: ptrace execve enforcement WITH the seccomp prefilter.
+  # The prefilter is a basic BPF filter that returns SECCOMP_RET_TRACE only for
+  # execve (RET_ERRNO for static denies, RET_ALLOW otherwise), installed with
+  # TSYNC -- NOT a NEW_LISTENER user-notify listener. So it does NOT hit the EBUSY
+  # listener conflict that blocks the unixwrap seccomp-notify path in Daytona
+  # (Daytona's container holds the one allowed user-notify listener; basic filters
+  # still stack fine). Benefits over prefilter:false (pure TRACESYSGOOD):
+  #   - ptrace is woken only on execve, not every syscall -> no perf cliff
+  #   - the filter is inherited across fork/exec -> covers ALL descendants, which
+  #     should close the nested-exec leak (xargs/find/python/script -> sudo).
+  # unix_sockets stays false to avoid the unixwrap NEW_LISTENER path (which DOES EBUSY).
+  ptrace:
+    enabled: true
+    attach_mode: children
+    on_attach_failure: fail_closed
+    performance:
+      seccomp_prefilter: true
+    trace:
+      execve: true
+      file: false
+      network: false
+      signal: false
 
   # v0.8.9: Operator-controlled environment variable injection
   # These bypass env_policy filtering since they're operator-controlled
@@ -165,6 +222,14 @@ dlp:
 policies:
   dir: "/etc/agentsh/policies"
   default: "default"
+  # v0.20.1: How to treat symlinks whose targets resolve outside the sandbox root.
+  #   "evaluate" (new default) follows the link and checks the target against
+  #     file_rules; "deny" is a blanket-deny of any such symlink.
+  # MUST be "evaluate" here: Daytona's /home/daytona working dir is itself reached
+  # via a symlink that escapes the FUSE workspace mount, so "deny" blocks EVERY
+  # command at cwd resolution (rule=workspace-escape). The resolved target is still
+  # checked against file_rules, so sensitive reads stay blocked.
+  symlink_escape: evaluate
   project_markers:
     - ".git"
     - "package.json"
